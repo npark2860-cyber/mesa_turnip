@@ -100,7 +100,7 @@ util_fpstate_get(void)
    {
 #ifdef HAVE___BUILTIN_AARCH64_GET_FPCR
       fpstate = (unsigned)__builtin_aarch64_get_fpcr();
-#elif DETECT_CC_MSVC
+#elif DETECT_CC_MSVC && !defined(__clang__)
       fpstate = (unsigned)_ReadStatusReg(ARM64_FPCR);
 #else
       uint64_t fpcr;
@@ -169,7 +169,7 @@ util_fpstate_set(unsigned fpstate)
    {
 #ifdef HAVE___BUILTIN_AARCH64_SET_FPCR
       __builtin_aarch64_set_fpcr(fpstate);
-#elif DETECT_CC_MSVC
+#elif DETECT_CC_MSVC && !defined(__clang__)
       _WriteStatusReg(ARM64_FPCR, fpstate);
 #else
       uint64_t fpcr = fpstate;
