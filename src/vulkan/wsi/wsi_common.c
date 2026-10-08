@@ -28,6 +28,8 @@
 #include "util/os_file.h"
 #include "util/os_time.h"
 #include "util/xmlconfig.h"
+#include "util/hash_table.h"
+#include "util/ralloc.h"
 #include "vk_device.h"
 #include "vk_fence.h"
 #include "vk_format.h"
@@ -1512,8 +1514,12 @@ wsi_CreateSwapchainKHR(VkDevice _device,
 
    if ((pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT) ||
        device->enabled_extensions.GOOGLE_display_timing) {
+      if (mtx_init(&swapchain->present_timing.lock, mtx_plain) != thrd_success) {
+         swapchain->destroy(swapchain, alloc);
+         *pSwapchain = VK_NULL_HANDLE;
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+      }
       swapchain->present_timing.active = true;
-      mtx_init(&swapchain->present_timing.lock, 0);
 
       if (swapchain->present_timing.supported_query_stages & VK_PRESENT_STAGE_QUEUE_OPERATIONS_END_BIT_EXT) {
          for (uint32_t i = 0; i < swapchain->image_count; i++) {
@@ -1578,6 +1584,28 @@ wsi_DestroySwapchainKHR(VkDevice _device,
      alloc = pAllocator;
    else
      alloc = &device->alloc;
+
+   mtx_lock(&device->swapchain_private_mtx);
+   if (device->swapchain_private) {
+      struct hash_entry *entry = _mesa_hash_table_search(device->swapchain_private,
+                                                        swapchain);
+      if (entry) {
+         util_sparse_array_finish(entry->data);
+         ralloc_free(entry->data);
+         _mesa_hash_table_remove(device->swapchain_private, entry);
+      }
+   }
+   mtx_unlock(&device->swapchain_private_mtx);
+   mtx_lock(&device->swapchain_name_mtx);
+   if (device->swapchain_name) {
+      struct hash_entry *entry = _mesa_hash_table_search(device->swapchain_name,
+                                                        swapchain);
+      if (entry) {
+         vk_free(&device->alloc, entry->data);
+         _mesa_hash_table_remove(device->swapchain_name, entry);
+      }
+   }
+   mtx_unlock(&device->swapchain_name_mtx);
 
    swapchain->destroy(swapchain, alloc);
 }
