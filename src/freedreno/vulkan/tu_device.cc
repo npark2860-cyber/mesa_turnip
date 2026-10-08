@@ -4008,14 +4008,16 @@ sync_cache(VkDevice _device,
 {
    VK_FROM_HANDLE(tu_device, device, _device);
 
-   if (!device->physical_device->has_cached_non_coherent_memory) {
-      tu_finishme(
-         "data cache clean and invalidation are unsupported on this arch!");
-      return VK_SUCCESS;
-   }
-
    for (uint32_t i = 0; i < count; i++) {
       VK_FROM_HANDLE(tu_device_memory, mem, ranges[i].memory);
+      if (device->physical_device->memory.types[mem->vk.memory_type_index] &
+          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+         continue;
+      if (!device->physical_device->has_cached_non_coherent_memory) {
+         tu_finishme(
+            "data cache clean and invalidation are unsupported on this arch!");
+         return VK_SUCCESS;
+      }
       tu_bo_sync_cache(device, mem->bo, ranges[i].offset, ranges[i].size, op);
    }
 
