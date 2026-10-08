@@ -347,7 +347,9 @@ tu_queue_submit(struct tu_queue *queue, void *submit,
 VkResult
 tu_enumerate_devices(struct vk_instance *vk_instance)
 {
-#ifdef TU_HAS_KGSL
+#ifdef TU_HAS_WDDM
+   return tu_knl_wddm_load(container_of(vk_instance, struct tu_instance, vk));
+#elif defined(TU_HAS_KGSL)
    struct tu_instance *instance =
       container_of(vk_instance, struct tu_instance, vk);
 

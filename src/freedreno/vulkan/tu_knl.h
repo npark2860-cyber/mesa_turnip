@@ -44,6 +44,11 @@ struct tu_bo {
 #endif
    uint64_t size;
    uint64_t iova;
+#ifdef TU_HAS_WDDM
+   uint64_t wddm_reserved_va;
+   uint64_t wddm_reserved_size;
+   uint32_t wddm_resource;
+#endif
    void *map;
    const char *name; /* pointer to device->bo_sizes's entry's name */
    int32_t refcnt;
@@ -270,6 +275,9 @@ void tu_sparse_vma_finish(struct tu_device *device,
                           struct tu_sparse_vma *vma);
 
 VkResult tu_knl_kgsl_load(struct tu_instance *instance, int fd);
+VkResult tu_knl_wddm_load(struct tu_instance *instance);
+void tu_knl_wddm_physical_finish(struct tu_physical_device *device);
+bool tu_knl_wddm_memory_budget(struct tu_physical_device *device, uint64_t *budget, uint64_t *usage);
 
 struct _drmVersion;
 VkResult tu_knl_drm_msm_load(struct tu_instance *instance,

@@ -2191,7 +2191,8 @@ tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
       ));
    }
 
-   for (size_t i = 0; i < ARRAY_SIZE(phys_dev->info->magic_raw); i++) {
+   for (size_t i = 0; !phys_dev->kernel_sets_magic_regs &&
+                      i < ARRAY_SIZE(phys_dev->info->magic_raw); i++) {
       auto magic_reg = phys_dev->info->magic_raw[i];
       if (!magic_reg.reg)
          break;

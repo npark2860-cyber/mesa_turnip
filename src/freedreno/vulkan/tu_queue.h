@@ -33,6 +33,10 @@ struct tu_queue
    uint32_t sparse_syncobj, gfx_syncobj;
    uint64_t sparse_timepoint, gfx_timepoint;
 
+#ifdef TU_HAS_WDDM
+   struct wddm_sync *wddm_completion;
+#endif
+
    unsigned render_pass_idx;
 
    int fence;           /* timestamp/fence of the last queue submission */

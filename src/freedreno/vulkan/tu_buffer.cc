@@ -159,6 +159,13 @@ tu_GetPhysicalDeviceExternalBufferProperties(
    const VkPhysicalDeviceExternalBufferInfo *pExternalBufferInfo,
    VkExternalBufferProperties *pExternalBufferProperties)
 {
+#ifdef TU_HAS_WDDM
+   VK_FROM_HANDLE(tu_physical_device, pdevice, physicalDevice);
+   if (pdevice->wddm_adapter) {
+      pExternalBufferProperties->externalMemoryProperties = {};
+      return;
+   }
+#endif
    BITMASK_ENUM(VkExternalMemoryFeatureFlagBits) flags = 0;
    VkExternalMemoryHandleTypeFlags export_flags = 0;
    VkExternalMemoryHandleTypeFlags compat_flags = 0;

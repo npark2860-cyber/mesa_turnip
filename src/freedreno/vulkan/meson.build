@@ -105,6 +105,12 @@ tu_flags = [sse2_args]
 
 tu_wsi = false
 
+if freedreno_kmds.contains('wddm')
+  tu_wsi = true
+  tu_flags += '-DTU_HAS_WDDM'
+  libtu_files += files('tu_knl_wddm.cc')
+endif
+
 if with_platform_x11
   tu_deps += dep_xcb_dri3
   tu_wsi = true

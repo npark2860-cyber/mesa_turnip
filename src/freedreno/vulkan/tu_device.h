@@ -94,6 +94,11 @@ struct tu_physical_device
 
    struct tu_instance *instance;
 
+#ifdef TU_HAS_WDDM
+   uint32_t wddm_adapter;
+   uint64_t wddm_luid;
+#endif
+
    const char *name;
    uint8_t driver_uuid[VK_UUID_SIZE];
    uint8_t device_uuid[VK_UUID_SIZE];
@@ -152,6 +157,7 @@ struct tu_physical_device
    struct fdl_ubwc_config ubwc_config;
 
    bool has_preemption;
+   bool kernel_sets_magic_regs;
 
    bool expose_double_threadsize;
 
@@ -319,6 +325,9 @@ struct tu_device
    struct tu_physical_device *physical_device;
    uint32_t device_idx;
    int fd;
+#ifdef TU_HAS_WDDM
+   struct tu_wddm_device *wddm;
+#endif
 
    struct ir3_compiler *compiler;
 

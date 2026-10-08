@@ -161,6 +161,9 @@ static const struct vk_instance_extension_table tu_instance_extensions_supported
 #ifdef VK_USE_PLATFORM_WAYLAND_KHR
    .KHR_wayland_surface                 = true,
 #endif
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   .KHR_win32_surface                   = true,
+#endif
 #ifdef VK_USE_PLATFORM_XCB_KHR
    .KHR_xcb_surface                     = true,
 #endif
@@ -1921,7 +1924,11 @@ tu_physical_device_finish(struct tu_physical_device *device)
    tu_wsi_finish(device);
 #endif
 
-   close(device->local_fd);
+#ifdef TU_HAS_WDDM
+   tu_knl_wddm_physical_finish(device);
+#endif
+   if (device->local_fd != -1)
+      close(device->local_fd);
    if (device->master_fd != -1)
       close(device->master_fd);
 
@@ -2183,6 +2190,11 @@ tu_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice pdev,
             (VkPhysicalDeviceMemoryBudgetPropertiesEXT *) ext;
          memory_budget_props->heapUsage[0] = p_atomic_read(&physical_device->heap.used);
          memory_budget_props->heapBudget[0] = tu_get_budget_memory(physical_device, memory_budget_props->heapUsage[0]);
+#ifdef TU_HAS_WDDM
+         if (physical_device->wddm_adapter)
+            tu_knl_wddm_memory_budget(physical_device, &memory_budget_props->heapBudget[0],
+                                      &memory_budget_props->heapUsage[0]);
+#endif
 
          /* The heapBudget and heapUsage values must be zero for array elements
           * greater than or equal to VkPhysicalDeviceMemoryProperties::memoryHeapCount
