@@ -2334,7 +2334,7 @@ tu_emit_program_state(struct tu_cs *sub_cs,
          }
 
          for (unsigned i = 0; i < MAX_SETS; i++) {
-            if (shaders[stage]->dynamic_descriptor_sizes[i] >= 0) {
+            if (variants[stage] && shaders[stage]->dynamic_descriptor_sizes[i] >= 0) {
                dynamic_descriptor_sizes[i] =
                   shaders[stage]->dynamic_descriptor_sizes[i];
             }
