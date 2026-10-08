@@ -954,6 +954,16 @@ vk_common_GetCalibratedTimestampsKHR(
              VK_TIME_DOMAIN_DEVICE_KHR) {
             pTimestamps[i] = (uint64_t)((double)pTimestamps[i] * (double)device->physical->properties.timestampPeriod);
          }
+#if DETECT_OS_WINDOWS
+         if (wsi_common_get_time_domain(swap->swapchain, swap->presentStage, swap->timeDomainId) ==
+             VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR) {
+            LARGE_INTEGER frequency;
+            QueryPerformanceFrequency(&frequency);
+            uint64_t ticks = pTimestamps[i];
+            pTimestamps[i] = (ticks / frequency.QuadPart) * NSEC_PER_SEC +
+                            (ticks % frequency.QuadPart) * NSEC_PER_SEC / frequency.QuadPart;
+         }
+#endif
 
          /* Timestamps in QueueOperationsEnd are always derived from a device timestamp,
           * even if the reported time domain is not. */

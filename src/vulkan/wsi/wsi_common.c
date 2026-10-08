@@ -1128,6 +1128,7 @@ wsi_surface_capabilities_add_present_stages(const struct wsi_device *wsi_device,
          wsi_device->GetPhysicalDeviceCalibrateableTimeDomainsKHR(wsi_device->pdevice, &count, domains);
 
          bool supports_device = false, supports_monotonic = false, supports_monotonic_raw = false;
+         bool supports_qpc = false;
 
          for (uint32_t i = 0; i < count; i++) {
             if (domains[i] == VK_TIME_DOMAIN_DEVICE_KHR)
@@ -1136,12 +1137,15 @@ wsi_surface_capabilities_add_present_stages(const struct wsi_device *wsi_device,
                supports_monotonic = true;
             else if (domains[i] == VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR)
                supports_monotonic_raw = true;
+            else if (domains[i] == VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR)
+               supports_qpc = true;
          }
 
          /* Current present timing implementations do not use anything outside these.
           * QPC might be relevant for Dozen at some point, but for now, we only consider Linux-centric
           * platforms for present timing. */
-         if (supports_device && supports_monotonic && supports_monotonic_raw)
+         if (supports_device && ((supports_monotonic && supports_monotonic_raw) ||
+                                 (supports_qpc && wsi_device->win32.create_buffer_memory)))
             present_timing->presentStageQueries |= VK_PRESENT_STAGE_QUEUE_OPERATIONS_END_BIT_EXT;
       }
    }
@@ -1671,6 +1675,16 @@ wsi_swapchain_present_convert_device_to_cpu(struct wsi_swapchain *chain,
    /* Ignore target time if this fails for whatever reason. */
    if (chain->wsi->GetCalibratedTimestampsKHR(chain->device, 2, infos, timestamps, &max_deviation) != VK_SUCCESS)
       return 0;
+
+#ifdef _WIN32
+   if (chain->present_timing.time_domain == VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR) {
+      LARGE_INTEGER frequency;
+      QueryPerformanceFrequency(&frequency);
+      uint64_t ticks = timestamps[1];
+      timestamps[1] = (ticks / frequency.QuadPart) * 1000000000ULL +
+                      (ticks % frequency.QuadPart) * 1000000000ULL / frequency.QuadPart;
+   }
+#endif
 
    if (is_nanoseconds_scaled) {
       /* PRESENT_STAGE_LOCAL_EXT is in terms of nanoseconds, so we don't scale that. */
@@ -3197,8 +3211,10 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
       __vk_append_struct(&buf_mem_info, &memory_export_info);
    }
 
-   result = wsi->AllocateMemory(chain->device, &buf_mem_info,
-                                &chain->alloc, &image->blit.memory);
+   result = info->alloc_blit_memory ?
+      info->alloc_blit_memory(chain, image, &buf_mem_info) :
+      wsi->AllocateMemory(chain->device, &buf_mem_info,
+                         &chain->alloc, &image->blit.memory);
    if (result != VK_SUCCESS)
       return result;
 
@@ -3258,7 +3274,8 @@ wsi_cmd_blit_image_to_buffer(VkCommandBuffer cmd_buffer,
                              uint32_t qfi)
 {
    assert(info->image_type == WSI_IMAGE_TYPE_CPU ||
-          info->image_type == WSI_IMAGE_TYPE_DRM);
+          info->image_type == WSI_IMAGE_TYPE_DRM ||
+          info->image_type == WSI_IMAGE_TYPE_DXGI);
 
    VkImageMemoryBarrier img_mem_barrier = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,

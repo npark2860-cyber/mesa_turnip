@@ -140,6 +140,11 @@ struct wsi_device {
 
    struct {
       void *(*get_d3d12_command_queue)(VkDevice device);
+      void *(*get_d3d12_fence)(VkDevice device, VkFence fence, uint64_t *value);
+      VkResult (*create_buffer_memory)(VkDevice device,
+                                      const VkMemoryAllocateInfo *info,
+                                      const VkAllocationCallbacks *alloc,
+                                      void **resource, VkDeviceMemory *out);
       /* Needs to be per VkDevice, not VkPhysicalDevice, depends on queue config */
       bool (*requires_blits)(VkDevice device);
       VkResult (*create_image_memory)(VkDevice device, void *resource,

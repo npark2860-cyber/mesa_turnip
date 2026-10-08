@@ -124,6 +124,10 @@ struct wsi_image_info {
    wsi_memory_type_select_cb select_image_memory_type;
    wsi_memory_type_select_cb select_blit_dst_memory_type;
 
+   VkResult (*alloc_blit_memory)(const struct wsi_swapchain *chain,
+                                struct wsi_image *image,
+                                const VkMemoryAllocateInfo *info);
+
    uint8_t *(*alloc_shm)(struct wsi_image *image, unsigned size);
 
    VkResult (*create_mem)(const struct wsi_swapchain *chain,
