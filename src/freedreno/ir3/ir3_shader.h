@@ -957,7 +957,7 @@ struct ir3_shader_variant {
 
          /** The number of vertices in the TCS output patch. */
          uint8_t tcs_vertices_out;
-         enum gl_tess_spacing spacing:2; /*gl_tess_spacing*/
+         enum gl_tess_spacing spacing;
 
          /** Is the vertex order counterclockwise? */
          bool ccw:1;

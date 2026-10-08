@@ -493,7 +493,7 @@ struct ir3_instruction {
          unsigned d    : 3; /* for ldc, component offset */
          bool typed    : 1;
          unsigned base : 3;
-         ir3_shfl_mode shfl_mode : 3;
+         ir3_shfl_mode shfl_mode;
       } cat6;
       struct {
          unsigned w : 1; /* write */

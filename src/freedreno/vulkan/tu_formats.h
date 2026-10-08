@@ -19,8 +19,8 @@
 
 struct tu_native_format
 {
-   enum a6xx_format fmt : 8;
-   enum a3xx_color_swap swap : 8;
+   enum a6xx_format fmt;
+   enum a3xx_color_swap swap;
 };
 
 struct tu_native_format tu6_format_vtx(enum pipe_format format);
