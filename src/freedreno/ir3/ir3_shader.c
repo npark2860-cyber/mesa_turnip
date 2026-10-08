@@ -19,6 +19,7 @@
 #include "ir3_nir.h"
 #include "ir3_parser.h"
 #include "ir3_shader.h"
+#include "util/memstream.h"
 
 #include "nir/nir.h"
 #include "nir/nir_xfb_info.h"
@@ -307,7 +308,10 @@ disasm_collect(struct ir3_shader_variant *v, uint8_t *mismatch_array,
 {
    char *stream_data = NULL;
    size_t stream_size = 0;
-   FILE *stream = open_memstream(&stream_data, &stream_size);
+   struct u_memstream mem;
+   if (!u_memstream_open(&mem, &stream_data, &stream_size))
+      return NULL;
+   FILE *stream = u_memstream_get(&mem);
 
    struct disasm_context context = {
       .stream = stream,
@@ -325,7 +329,7 @@ disasm_collect(struct ir3_shader_variant *v, uint8_t *mismatch_array,
 
    ir3_isa_disasm(binary_data, binary_size, stream, &decode_options);
 
-   fclose(stream);
+   u_memstream_close(&mem);
    return stream_data;
 }
 
@@ -413,7 +417,10 @@ create_roundtrip_variant(struct ir3_shader *shader, struct ir3_shader_variant *v
     */
    char *disasm_data = NULL;
    size_t disasm_size = 0;
-   FILE *disasm_stream = open_memstream(&disasm_data, &disasm_size);
+   struct u_memstream mem;
+   if (!u_memstream_open(&mem, &disasm_data, &disasm_size))
+      goto fail;
+   FILE *disasm_stream = u_memstream_get(&mem);
    ir3_shader_disasm(v, v->bin, disasm_stream);
    fflush(disasm_stream);
 
@@ -424,7 +431,7 @@ create_roundtrip_variant(struct ir3_shader *shader, struct ir3_shader_variant *v
    fseek(disasm_stream, 0, SEEK_SET);
    rt_v->ir = ir3_parse(rt_v, &info, disasm_stream);
 
-   fclose(disasm_stream);
+   u_memstream_close(&mem);
    free(disasm_data);
 
    if (!rt_v->ir) {
@@ -473,7 +480,10 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
       if (v->disasm_info.write_disasm || dbg_enabled || shader_overridden) {
          char *stream_data = NULL;
          size_t stream_size = 0;
-         FILE *stream = open_memstream(&stream_data, &stream_size);
+         struct u_memstream mem;
+         if (!u_memstream_open(&mem, &stream_data, &stream_size))
+            return;
+         FILE *stream = u_memstream_get(&mem);
 
          fprintf(stream,
                  "Native code%s for unnamed %s shader %s with blake3 %s:\n",
@@ -481,7 +491,7 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
                  v->name, v->blake3_str);
          ir3_shader_disasm(v, v->bin, stream);
 
-         fclose(stream);
+         u_memstream_close(&mem);
 
          if (v->disasm_info.write_disasm) {
             v->disasm_info.disasm = ralloc_size(v, stream_size + 1);

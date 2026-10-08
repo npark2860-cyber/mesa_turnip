@@ -15,7 +15,11 @@
 
 /* clang-format off */
 void ir3_assert_handler(const char *expr, const char *file, int line,
-                        const char *func) __attribute__((weak)) __attribute__((__noreturn__));
+                        const char *func)
+#ifndef _WIN32
+   __attribute__((weak))
+#endif
+   __attribute__((__noreturn__));
 /* clang-format on */
 
 /* A wrapper for assert() that allows overriding handling of a failed

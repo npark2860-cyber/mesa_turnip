@@ -6,6 +6,7 @@
 
 #include "freedreno_dev_info.h"
 #include "util/macros.h"
+#include "util/u_string.h"
 
 /**
  * Table entry for a single GPU version

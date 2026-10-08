@@ -47,7 +47,7 @@ typedef unsigned int drm_handle_t;
 #include <sys/types.h>
 #if defined(__GNU__)
 #include <sys/ioctl.h>
-#else
+#elif !defined(_WIN32)
 #include <sys/ioccom.h>
 #endif
 typedef int8_t   __s8;

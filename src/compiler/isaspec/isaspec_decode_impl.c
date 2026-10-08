@@ -40,6 +40,8 @@
 #include "util/ralloc.h"
 #include "util/u_debug.h"
 #include "util/u_math.h"
+#include "util/u_string.h"
+#include "util/strndup.h"
 
 #include "isa.h"
 

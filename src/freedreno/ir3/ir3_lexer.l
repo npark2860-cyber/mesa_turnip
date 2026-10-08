@@ -37,6 +37,32 @@ extern char *current_line;
 const char *input_buffer = NULL;
 size_t input_buffer_len = 256;
 
+#ifdef _WIN32
+static int ir3_getline(char **line, size_t *capacity, FILE *stream)
+{
+  size_t count = 0;
+  int c;
+  while ((c = fgetc(stream)) != EOF) {
+    if (count + 1 >= *capacity) {
+      size_t size = *capacity ? *capacity * 2 : 256;
+      char *buffer = realloc(*line, size);
+      if (!buffer)
+        return -1;
+      *line = buffer;
+      *capacity = size;
+    }
+    (*line)[count++] = c;
+    if (c == '\n')
+      break;
+  }
+  if (!count)
+    return -1;
+  (*line)[count] = '\0';
+  return (int)count;
+}
+#define getline ir3_getline
+#endif
+
 /**
  * Return up to max_size chars from the current input_buffer.  Reads a new
  * line into the input_buffer if it is currently empty.
@@ -45,11 +71,14 @@ static size_t yy_input(char *buf, size_t max_size)
 {
   if (!input_buffer)
     current_line = malloc(input_buffer_len);
+  if (!current_line)
+    return 0;
 
   if (!input_buffer || !strlen(input_buffer)) {
     if (getline(&current_line, &input_buffer_len, ir3_yyin) < 0) {
       if (ferror(ir3_yyin))
         fprintf(stderr, "Could not read input:\n");
+      return 0;
     } else {
       input_buffer = current_line;
     }

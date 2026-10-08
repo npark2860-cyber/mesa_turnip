@@ -13,13 +13,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#define ftruncate _chsize
+#else
 #include <unistd.h>
+#endif
 
 #include "c11/threads.h"
 #include "util/detect_os.h"
 #include "util/log.h"
 #include "util/u_atomic.h"
 #include "util/u_debug.h"
+#include "util/u_string.h"
 
 static const struct debug_control fd_rd_dump_options[] = {
    { "enable", FD_RD_DUMP_ENABLE },
