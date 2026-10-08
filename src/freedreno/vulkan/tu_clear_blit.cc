@@ -3859,15 +3859,22 @@ copy_buffer(struct tu_cmd_buffer *cmd,
       uint32_t src_x = (src_va & 63) / block_size;
       uint32_t dst_x = (dst_va & 63) / block_size;
       uint32_t width = MIN2(MIN2(blocks, 0x4000 - src_x), 0x4000 - dst_x);
+      uint32_t height = 1;
+      uint32_t pitch = 0;
+      if (!src_x && !dst_x && blocks >= 8192) {
+         width = 4096;
+         height = MIN2(blocks / width, 0x4000);
+         pitch = width * block_size;
+      }
 
-      ops->src_buffer(cmd, cs, format, src_va & ~63, 0, src_x + width, 1, format);
-      ops->dst_buffer(     cs, format, dst_va & ~63, 0, format);
-      ops->coords(cmd, cs, (VkOffset2D) {dst_x}, (VkOffset2D) {src_x}, (VkExtent2D) {width, 1});
+      ops->src_buffer(cmd, cs, format, src_va & ~63, pitch, src_x + width, height, format);
+      ops->dst_buffer(     cs, format, dst_va & ~63, pitch, format);
+      ops->coords(cmd, cs, (VkOffset2D) {dst_x}, (VkOffset2D) {src_x}, (VkExtent2D) {width, height});
       ops->run(cmd, cs);
 
-      src_va += width * block_size;
-      dst_va += width * block_size;
-      blocks -= width;
+      src_va += uint64_t(width) * height * block_size;
+      dst_va += uint64_t(width) * height * block_size;
+      blocks -= uint64_t(width) * height;
    }
 
    ops->teardown(cmd, cs);
