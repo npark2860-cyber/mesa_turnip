@@ -59,7 +59,7 @@ extern "C" {
  * On MSVC, weak symbols are not well supported, so we use the functionally
  * equivalent /alternatename.
  */
-#if !defined(_MSC_VER) && defined(VK_ENTRY_USE_WEAK)
+#if (!defined(_MSC_VER) || defined(__clang__)) && defined(VK_ENTRY_USE_WEAK)
 #define VK_ENTRY_WEAK __attribute__ ((weak))
 #else
 #define VK_ENTRY_WEAK
@@ -174,7 +174,7 @@ TEMPLATE_C = Template(COPYRIGHT + """
 #ifdef ${e.guard}
     % endif
     % for p in prefixes:
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && !defined(__clang__)
 #ifdef _M_IX86
       % for args_size in [4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 60, 104]:
     #pragma comment(linker, "/alternatename:_${p}_${e.name}@${args_size}=_vk_entrypoint_stub@0")
