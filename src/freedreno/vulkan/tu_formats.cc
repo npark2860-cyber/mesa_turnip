@@ -644,7 +644,8 @@ tu_get_image_format_properties(
        (format_feature_flags &
         (VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT |
          VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT)) &&
-       !(info->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) &&
+       (!(info->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) ||
+        (info->flags & VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT)) &&
        !(info->usage & (VK_IMAGE_USAGE_STORAGE_BIT |
                         VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT |
                         VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR))) {
