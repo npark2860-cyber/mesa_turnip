@@ -3018,6 +3018,8 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    result = vk_meta_device_init(&device->vk, &device->meta);
    if (result != VK_SUCCESS)
       goto fail_queues;
+   for (unsigned i = 0; i < ARRAY_SIZE(device->meta.buffer_access.optimal_wg_size); i++)
+      device->meta.buffer_access.optimal_wg_size[i] = 128;
 
    {
       struct ir3_compiler_options ir3_options = {
