@@ -35,18 +35,11 @@ ir3_disk_cache_init(struct ir3_compiler *compiler)
       return;
 
    const char *renderer = fd_dev_name(compiler->dev_id);
-   const struct build_id_note *note =
-      build_id_find_nhdr_for_addr((const void *)ir3_disk_cache_init);
-   unsigned build_id_len = build_id_length(note);
-   assert(note && build_id_len == BUILD_ID_EXPECTED_HASH_LENGTH); /* sha1 */
-
-   const uint8_t *id_sha1 = build_id_data(note);
-   assert(id_sha1);
-
    blake3_hasher ctx;
    uint8_t blake3[BLAKE3_KEY_LEN];
    _mesa_blake3_init(&ctx);
-   _mesa_blake3_update(&ctx, id_sha1, build_id_len);
+   if (!disk_cache_get_function_identifier((void *)ir3_disk_cache_init, &ctx))
+      return;
    _mesa_blake3_update(&ctx, &compiler->options.uche_trap_base,
                      sizeof(compiler->options.uche_trap_base));
    _mesa_blake3_final(&ctx, blake3);
