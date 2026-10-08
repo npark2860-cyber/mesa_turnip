@@ -146,6 +146,7 @@ struct tu_knl {
    int (*bo_export_dmabuf)(struct tu_device *dev, struct tu_bo *bo);
    VkResult (*bo_alloc_lazy)(struct tu_device *dev, struct tu_bo *bo);
    VkResult (*bo_map)(struct tu_device *dev, struct tu_bo *bo, void *placed_addr);
+   VkResult (*bo_unmap)(struct tu_device *dev, struct tu_bo *bo, bool reserve);
    void (*bo_allow_dump)(struct tu_device *dev, struct tu_bo *bo);
    void (*bo_finish)(struct tu_device *dev, struct tu_bo *bo);
    void (*bo_set_metadata)(struct tu_device *dev, struct tu_bo *bo,

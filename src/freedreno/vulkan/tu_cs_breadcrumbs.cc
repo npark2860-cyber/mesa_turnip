@@ -3,12 +3,14 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "tu_cs.h"
+#include "tu_device.h"
+
+#if TU_BREADCRUMBS_ENABLED
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-#include "tu_cs.h"
-#include "tu_device.h"
 
 /* A simple implementations of breadcrumbs tracking of GPU progress
  * intended to be a last resort when debugging unrecoverable hangs.
@@ -219,3 +221,17 @@ tu_cs_emit_sync_breadcrumb(struct tu_cs *cs, uint8_t opcode, uint16_t cnt)
    if (before_packet)
       cs->breadcrumb_emit_after = cnt;
 }
+#else
+void tu_breadcrumbs_init(struct tu_device *device)
+{
+   device->breadcrumbs_ctx = NULL;
+}
+
+void tu_breadcrumbs_finish(struct tu_device *device)
+{
+}
+
+void tu_cs_emit_sync_breadcrumb(struct tu_cs *cs, uint8_t opcode, uint16_t cnt)
+{
+}
+#endif

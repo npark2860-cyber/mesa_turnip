@@ -16,7 +16,9 @@
 #include <sys/sysmacros.h>
 #endif
 
+#ifndef _WIN32
 #include <sys/mman.h>
+#endif
 
 #include "util/cache_ops.h"
 #include "util/libdrm.h"
@@ -153,6 +155,10 @@ tu_bo_unmap(struct tu_device *dev, struct tu_bo *bo, bool reserve)
 
    TU_RMV(bo_unmap, dev, bo);
 
+   if (dev->instance->knl->bo_unmap)
+      return dev->instance->knl->bo_unmap(dev, bo, reserve);
+
+#ifndef _WIN32
    if (reserve) {
       void *map = mmap(bo->map, bo->size, PROT_NONE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
@@ -166,6 +172,9 @@ tu_bo_unmap(struct tu_device *dev, struct tu_bo *bo, bool reserve)
    bo->map = NULL;
 
    return VK_SUCCESS;
+#else
+   return VK_ERROR_MEMORY_MAP_FAILED;
+#endif
 }
 
 void
@@ -377,6 +386,9 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
                               struct _drmDevice *drm_device,
                               struct vk_physical_device **out)
 {
+#ifdef _WIN32
+   return VK_ERROR_INCOMPATIBLE_DRIVER;
+#else
    struct tu_instance *instance =
       container_of(vk_instance, struct tu_instance, vk);
 
@@ -492,4 +504,5 @@ out:
    drmFreeVersion(version);
 
    return result;
+#endif
 }

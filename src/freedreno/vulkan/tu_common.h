@@ -11,7 +11,11 @@
 #define TU_COMMON_H
 
 #include <assert.h>
+#ifndef _WIN32
 #include <pthread.h>
+#else
+#include <io.h>
+#endif
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>

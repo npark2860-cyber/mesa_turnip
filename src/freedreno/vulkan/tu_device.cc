@@ -1771,7 +1771,8 @@ tu_physical_device_init(struct tu_physical_device *device,
 
    device->expose_double_threadsize = info.props.supports_double_threadsize && !instance->drirc.misc.restrict_subgroup_size_64;
 
-   device->level1_dcache_size = util_cache_granularity();
+   device->level1_dcache_size =
+      util_has_cache_ops() ? util_cache_granularity() : 0;
    device->has_cached_non_coherent_memory =
       device->level1_dcache_size > 0 && !DETECT_ARCH_ARM;
    device->preferred_uncached_as_cached_index = -1;
@@ -2807,7 +2808,7 @@ tu_device_destroy_mutexes(struct tu_device *device)
 
    u_rwlock_destroy(&device->dma_bo_lock);
    u_rwlock_destroy(&device->vm_bind_fence_lock);
-   pthread_mutex_destroy(&device->submit_mutex);
+   mtx_destroy(&device->submit_mutex);
 
    if (device->physical_device->has_set_iova) {
       mtx_destroy(&device->vma_mutex);
@@ -2931,7 +2932,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
 
    u_rwlock_init(&device->dma_bo_lock);
    u_rwlock_init(&device->vm_bind_fence_lock);
-   pthread_mutex_init(&device->submit_mutex, NULL);
+   mtx_init(&device->submit_mutex, mtx_plain);
    device->vm_bind_fence_fd = -1;
 
    if (physical_device->has_set_iova) {
@@ -3069,12 +3070,12 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    }
 
    tu_bo_suballocator_init(&device->event_suballoc, device,
-      getpagesize(), TU_BO_ALLOC_INTERNAL_RESOURCE,
+      os_page_size, TU_BO_ALLOC_INTERNAL_RESOURCE,
       "event_suballoc");
 
    tu_bo_suballocator_init(
       &device->vis_stream_suballocator, device,
-      getpagesize(),
+      os_page_size,
       (enum tu_bo_alloc_flags)(TU_BO_ALLOC_INTERNAL_RESOURCE |
                                TU_BO_ALLOC_ALLOW_DUMP),
       "vis_stream_suballoc");
@@ -3209,6 +3210,12 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    tu_init_dbg_reg_stomper(device);
 
    /* Initialize a condition variable for timeline semaphore */
+#ifdef _WIN32
+   if (cnd_init(&device->timeline_cond) != thrd_success) {
+      result = VK_ERROR_INITIALIZATION_FAILED;
+      goto fail_timeline_cond;
+   }
+#else
    pthread_condattr_t condattr;
    if (pthread_condattr_init(&condattr) != 0) {
       result = vk_startup_errorf(physical_device->instance,
@@ -3231,6 +3238,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
       goto fail_timeline_cond;
    }
    pthread_condattr_destroy(&condattr);
+#endif
 
    device->use_z24uint_s8uint =
       physical_device->info->props.has_z24uint_s8uint &&
@@ -3447,7 +3455,11 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
 
    u_vector_finish(&device->zombie_vmas);
 
+#ifdef _WIN32
+   cnd_destroy(&device->timeline_cond);
+#else
    pthread_cond_destroy(&device->timeline_cond);
+#endif
    _mesa_hash_table_destroy(device->bo_sizes, NULL);
    vk_free(&device->vk.alloc, device->submit_bo_list);
    util_dynarray_fini(&device->dump_bo_list);
