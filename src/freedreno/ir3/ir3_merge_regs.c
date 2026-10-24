@@ -135,6 +135,42 @@ struct merge_def {
    unsigned offset;
 };
 
+/* Does instr read def as one of its sources? */
+static bool
+instr_reads_def(struct ir3_instruction *instr, struct ir3_register *def)
+{
+   foreach_src (src, instr) {
+      if ((src->flags & IR3_REG_SSA) && src->def == def)
+         return true;
+   }
+   return false;
+}
+
+/* Two defs that partially overlap in the merge set must never be inserted
+ * into the interval tree at the same time. A source killed by an instruction
+ * is normally removed before that instruction's destinations are inserted,
+ * but RA and the spiller keep it inserted when it still has live children
+ * (for example a collect whose components are used later). In that case a
+ * destination that partially overlaps the killed source would break the
+ * tree, so treat that pair as interfering.
+ */
+static bool
+partial_overlap_at_def(const struct merge_def *dom, const struct merge_def *cur)
+{
+   unsigned dom_start = dom->offset;
+   unsigned cur_start = cur->offset;
+   unsigned dom_end = dom_start + reg_size(dom->reg);
+   unsigned cur_end = cur_start + reg_size(cur->reg);
+
+   if (dom_end <= cur_start || cur_end <= dom_start)
+      return false;
+   if ((dom_start <= cur_start && dom_end >= cur_end) ||
+       (cur_start <= dom_start && cur_end >= dom_end))
+      return false;
+
+   return instr_reads_def(cur->reg->instr, dom->reg);
+}
+
 static bool
 can_skip_interference(const struct merge_def *a, const struct merge_def *b)
 {
@@ -291,6 +327,9 @@ merge_sets_interfere(struct ir3_liveness *live, struct ir3_merge_set *a,
        * everything in the stack.
        */
       for (int i = 0; i <= dom_index; i++) {
+         if (partial_overlap_at_def(&dom[i], &current))
+            return true;
+
          if (can_skip_interference(&current, &dom[i]))
             continue;
 
