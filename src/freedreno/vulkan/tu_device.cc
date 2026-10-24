@@ -1745,10 +1745,12 @@ tu_physical_device_init(struct tu_physical_device *device,
       device->dev_info = info;
       device->info = &device->dev_info;
 
-      /* When the kernel owns the magic registers we never write
-       * TPL1_DBG_ECO_CNTL. The Qualcomm value (0x11100000 in raw_magic_regs)
-       * leaves LINEAR_MIPMAP_FALLBACK_IN_BLOCKS clear, so the hardware
-       * compares the linear mipmap fallback threshold in texels.
+      /* When the kernel owns the magic registers, TPL1_DBG_ECO_CNTL is the
+       * only one Turnip writes (tu6_init_static_regs). It writes the Qualcomm
+       * value (0x11100000 in raw_magic_regs) with
+       * LINEAR_MIPMAP_FALLBACK_IN_BLOCKS taken from this flag, so keeping the
+       * flag false keeps the bit clear and the hardware compares the linear
+       * mipmap fallback threshold in texels.
        * Lay images out the same way, or compressed mip levels between the
        * texel and block thresholds are sampled with the wrong tiling.
        */

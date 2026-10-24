@@ -2191,11 +2191,22 @@ tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
       ));
    }
 
-   for (size_t i = 0; !phys_dev->kernel_sets_magic_regs &&
-                      i < ARRAY_SIZE(phys_dev->info->magic_raw); i++) {
+   for (size_t i = 0; i < ARRAY_SIZE(phys_dev->info->magic_raw); i++) {
       auto magic_reg = phys_dev->info->magic_raw[i];
       if (!magic_reg.reg)
          break;
+
+      /* When the kernel owns the magic registers (WDDM), still write
+       * TPL1_DBG_ECO_CNTL. On Adreno X1-85 with the Windows driver, LSFG frame
+       * generation (compute sampling UBWC RGBA16F images) hangs the GPU about
+       * once every 6 test passes unless this register gets the Qualcomm value;
+       * with it, 360 passes ran without a hang. Leave the rest to the kernel:
+       * writing TPL1_DBG_ECO_CNTL1 or 0x8e79 from the command stream loses the
+       * device there.
+       */
+      if (phys_dev->kernel_sets_magic_regs &&
+          magic_reg.reg != REG_A6XX_TPL1_DBG_ECO_CNTL)
+         continue;
 
       uint32_t value = magic_reg.value;
       switch(magic_reg.reg) {
