@@ -1411,6 +1411,35 @@ use_hw_binning(struct tu_cmd_buffer *cmd)
    return vsc->binning_possible && vsc->binning_useful;
 }
 
+/* Two or more attachments of the pass view the same subresource (same image,
+ * same mip, overlapping layers). In GMEM each attachment gets its own tile
+ * copy and each copy is resolved back to memory, so the copy stored last
+ * overwrites what the other attachment drew. Sysmem writes the shared memory
+ * directly, which is the behavior the application expects.
+ */
+static bool
+tu_pass_has_aliased_attachments(const struct tu_cmd_buffer *cmd)
+{
+   const struct tu_render_pass *pass = cmd->state.pass;
+   if (!pass || !cmd->state.attachments)
+      return false;
+   for (uint32_t i = 0; i < pass->attachment_count; ++i) {
+      const struct tu_image_view *a = cmd->state.attachments[i];
+      if (!a)
+         continue;
+      for (uint32_t j = i + 1; j < pass->attachment_count; ++j) {
+         const struct tu_image_view *b = cmd->state.attachments[j];
+         if (!b || b->image != a->image ||
+             b->vk.base_mip_level != a->vk.base_mip_level)
+            continue;
+         if (a->vk.base_array_layer < b->vk.base_array_layer + b->vk.layer_count &&
+             b->vk.base_array_layer < a->vk.base_array_layer + a->vk.layer_count)
+            return true;
+      }
+   }
+   return false;
+}
+
 static bool
 use_sysmem_rendering(struct tu_cmd_buffer *cmd,
                      tu_autotune::rp_ctx_t *rp_ctx,
@@ -1449,6 +1478,11 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
 
    if (cmd->state.rp.disable_gmem) {
       /* force_render_mode_reason is set where disable_gmem is set. */
+      return true;
+   }
+
+   if (tu_pass_has_aliased_attachments(cmd)) {
+      cmd->state.rp.force_render_mode_reason = "Aliased attachments";
       return true;
    }
 
