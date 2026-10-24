@@ -1745,6 +1745,16 @@ tu_physical_device_init(struct tu_physical_device *device,
       device->dev_info = info;
       device->info = &device->dev_info;
 
+      /* When the kernel owns the magic registers we never write
+       * TPL1_DBG_ECO_CNTL. The Qualcomm value (0x11100000 in raw_magic_regs)
+       * leaves LINEAR_MIPMAP_FALLBACK_IN_BLOCKS clear, so the hardware
+       * compares the linear mipmap fallback threshold in texels.
+       * Lay images out the same way, or compressed mip levels between the
+       * texel and block thresholds are sampled with the wrong tiling.
+       */
+      if (device->kernel_sets_magic_regs)
+         device->dev_info.props.supports_linear_mipmap_threshold_in_blocks = false;
+
       device->usable_gmem_size_gmem =
          fd6_calc_gmem_cache_offsets(&info, device->gmem_size,
                                      &device->config_gmem,
