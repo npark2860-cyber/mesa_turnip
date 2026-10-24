@@ -3889,38 +3889,6 @@ tu_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(tu_buffer, src_buffer, pCopyBufferInfo->srcBuffer);
    VK_FROM_HANDLE(tu_buffer, dst_buffer, pCopyBufferInfo->dstBuffer);
 
-#ifdef TU_HAS_WDDM
-   bool compute_copy = cmd->device->physical_device->wddm_adapter != 0;
-   uint64_t compute_copy_size = 0;
-   for (unsigned i = 0; i < pCopyBufferInfo->regionCount; i++) {
-      const VkBufferCopy2 &region = pCopyBufferInfo->pRegions[i];
-      uint64_t src_address = vk_buffer_address(&src_buffer->vk, region.srcOffset);
-      uint64_t dst_address = vk_buffer_address(&dst_buffer->vk, region.dstOffset);
-      compute_copy &= ((src_address | dst_address | region.size) & 15) == 0;
-      compute_copy_size += region.size;
-   }
-   if (compute_copy && compute_copy_size >= 65536) {
-      uint32_t saved_push_constants[MAX_PUSH_CONSTANTS_SIZE / 4];
-      memcpy(saved_push_constants, cmd->push_constants, sizeof(saved_push_constants));
-      auto saved_shader = cmd->state.shaders[MESA_SHADER_COMPUTE];
-      auto saved_load_state = cmd->state.compute_load_state;
-      cmd->state.cache.flush_bits |= TU_CMD_FLAG_CCU_CLEAN_COLOR |
-         TU_CMD_FLAG_CCU_INVALIDATE_COLOR | TU_CMD_FLAG_CACHE_CLEAN |
-         TU_CMD_FLAG_CACHE_INVALIDATE | TU_CMD_FLAG_WAIT_FOR_IDLE;
-      tu_emit_cache_flush<CHIP>(cmd);
-      vk_meta_copy_buffer(&cmd->vk, &cmd->device->meta, pCopyBufferInfo);
-      cmd->state.cache.flush_bits |= TU_CMD_FLAG_CACHE_CLEAN | TU_CMD_FLAG_WAIT_FOR_IDLE;
-      tu_emit_cache_flush<CHIP>(cmd);
-      cmd->state.compute_load_state = saved_load_state;
-      cmd->state.shaders[MESA_SHADER_COMPUTE] = saved_shader;
-      if (saved_shader)
-         tu_cs_emit_state_ib(&cmd->cs, saved_shader->state);
-      memcpy(cmd->push_constants, saved_push_constants, sizeof(saved_push_constants));
-      cmd->state.dirty |= TU_CMD_DIRTY_SHADER_CONSTS | TU_CMD_DIRTY_COMPUTE_DESC_SETS;
-      return;
-   }
-#endif
-
    trace_start_copy_buffer(&cmd->trace, &cmd->cs, cmd);
 
    /* Choose the largest common block size for all copy regions
