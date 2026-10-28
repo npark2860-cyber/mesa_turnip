@@ -2862,6 +2862,12 @@ template <chip CHIP>
 void
 tu6_emit_scissor(struct tu_cs *cs, const struct vk_viewport_state *vp)
 {
+   /* scissor_count is 0 when the pipeline has no viewport state, e.g. with
+    * rasterizer discard. A pkt4 cannot carry 0 registers, so emit nothing.
+    */
+   if (vp->scissor_count == 0)
+      return;
+
    tu_cs_emit_pkt4(cs, GRAS_SC_SCREEN_SCISSOR_TL(CHIP, 0).reg, vp->scissor_count * 2);
 
    for (uint32_t i = 0; i < vp->scissor_count; i++) {
