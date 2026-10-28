@@ -23,6 +23,8 @@
 #ifndef WSI_COMMON_H
 #define WSI_COMMON_H
 
+struct vk_sync;
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -139,6 +141,10 @@ struct wsi_device {
    } x11;
 
    struct {
+      VkResult (*import_native_image)(VkDevice, void *, VkImage, const VkAllocationCallbacks *, VkDeviceMemory *);
+      VkResult (*create_native_sync)(VkDevice, void **, void **);
+      VkResult (*copy_native_sync)(VkDevice, void *, uint64_t, struct vk_sync **);
+      void (*destroy_native_sync)(VkDevice, void *);
       void *(*get_d3d12_command_queue)(VkDevice device);
       void *(*get_d3d12_fence)(VkDevice device, VkFence fence, uint64_t *value);
       VkResult (*create_buffer_memory)(VkDevice device,

@@ -3880,6 +3880,9 @@ copy_buffer(struct tu_cmd_buffer *cmd,
    ops->teardown(cmd, cs);
 }
 
+/* SNAPRYU frame stats (diagnostic DLL only), implemented in tu_knl_wddm.cc. */
+void tu_framestat_copy(uint64_t bytes, bool old_compute);
+
 template <chip CHIP>
 VKAPI_ATTR void VKAPI_CALL
 tu_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
@@ -3890,6 +3893,19 @@ tu_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(tu_buffer, dst_buffer, pCopyBufferInfo->dstBuffer);
 
    trace_start_copy_buffer(&cmd->trace, &cmd->cs, cmd);
+
+   {
+      bool old_compute = true;
+      uint64_t bytes = 0;
+      for (unsigned i = 0; i < pCopyBufferInfo->regionCount; ++i) {
+         const VkBufferCopy2 *region = &pCopyBufferInfo->pRegions[i];
+         old_compute &= ((vk_buffer_address(&src_buffer->vk, region->srcOffset) |
+                          vk_buffer_address(&dst_buffer->vk, region->dstOffset) |
+                          region->size) & 15) == 0;
+         bytes += region->size;
+      }
+      tu_framestat_copy(bytes, old_compute && bytes >= 65536);
+   }
 
    /* Choose the largest common block size for all copy regions
     * to prevent WaW hazards when potentially performing non-overlapping

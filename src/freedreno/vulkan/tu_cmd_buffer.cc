@@ -4224,6 +4224,30 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
    tu_trace_end_render_pass<CHIP>(cmd, false, NULL);
 }
 
+/* SNAPRYU frame stats (diagnostic DLL only), implemented in tu_knl_wddm.cc. */
+void tu_framestat_rp(uint64_t sig, bool sysmem, uint32_t width, uint32_t height);
+
+static uint64_t
+tu_framestat_sig(const struct tu_cmd_buffer *cmd)
+{
+   const struct tu_render_pass *pass = cmd->state.pass;
+   const struct tu_framebuffer *fb = cmd->state.framebuffer;
+   uint64_t h = 0xcbf29ce484222325ull;
+   const auto mix = [&h](uint64_t v) {
+      h ^= v;
+      h *= 0x100000001b3ull;
+   };
+   mix(fb ? fb->width : 0);
+   mix(fb ? fb->height : 0);
+   mix(fb ? fb->layers : 0);
+   mix(pass ? pass->attachment_count : 0);
+   for (uint32_t i = 0; pass && i < pass->attachment_count; i++) {
+      mix(pass->attachments[i].format);
+      mix(pass->attachments[i].samples);
+   }
+   return h ^ (h >> 32);
+}
+
 template <chip CHIP>
 void
 tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
@@ -4235,7 +4259,13 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
    tu_autotune::rp_key_opt rp_key = cmd_buffer->device->autotune->emit_preempt_latency_tracking_rp_hash(cmd_buffer);
 
    tu_autotune::rp_ctx_t rp_ctx = NULL;
-   if (use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key))
+   const bool use_sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
+   {
+      const struct tu_framebuffer *fb = cmd_buffer->state.framebuffer;
+      tu_framestat_rp(tu_framestat_sig(cmd_buffer), use_sysmem,
+                      fb ? fb->width : 0, fb ? fb->height : 0);
+   }
+   if (use_sysmem)
       tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
    else
       tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);

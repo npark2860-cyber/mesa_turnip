@@ -76,6 +76,7 @@ struct wsi_drm_image_params {
 struct wsi_dxgi_image_params {
    struct wsi_base_image_params base;
    bool storage_image;
+   bool native_tiled;
 };
 
 typedef uint32_t (*wsi_memory_type_select_cb)(const struct wsi_device *wsi,
@@ -120,6 +121,8 @@ struct wsi_image_info {
 
    /* For buffer blit images, the size of the buffer in bytes */
    uint64_t linear_size;
+   bool win32_linear_shared;
+   bool win32_native_tiled;
 
    wsi_memory_type_select_cb select_image_memory_type;
    wsi_memory_type_select_cb select_blit_dst_memory_type;
@@ -165,12 +168,18 @@ enum wsi_swapchain_blit_type {
 struct wsi_image {
    VkImage image;
    VkDeviceMemory memory;
+   void *win32_acquire_sync;
+   uint64_t win32_acquire_value;
 
    struct {
       VkBuffer buffer;
       VkImage image;
       VkDeviceMemory memory;
       VkCommandBuffer *cmd_buffers;
+      VkCommandBuffer *copy_end_cmd_buffers;
+      VkQueryPool copy_query_pool;
+      bool linear_shared;
+      bool copy_timing_full;
       /* Whether the backing memory of the blit dst buffer is shared directly
        * with the compositor instead of being mapped via vkMapMemory locally.
        */

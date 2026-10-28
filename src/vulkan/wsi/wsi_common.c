@@ -1052,7 +1052,20 @@ wsi_destroy_image(const struct wsi_swapchain *chain,
       vk_free(&chain->alloc, image->blit.cmd_buffers);
    }
 
+   if (image->blit.copy_end_cmd_buffers) {
+      uint32_t count = chain->blit.queue ? 1 : wsi->queue_family_count;
+      for (uint32_t i = 0; i < count; i++) {
+         if (image->blit.copy_end_cmd_buffers[i])
+            wsi->FreeCommandBuffers(chain->device, chain->cmd_pools[i], 1,
+                                      &image->blit.copy_end_cmd_buffers[i]);
+      }
+      vk_free(&chain->alloc, image->blit.copy_end_cmd_buffers);
+   }
+
    wsi->DestroyQueryPool(chain->device, image->query_pool, NULL);
+   if (image->blit.copy_query_pool)
+      wsi->DestroyQueryPool(chain->device, image->blit.copy_query_pool,
+                            &chain->alloc);
 
    if (image->timestamp_cmd_buffers) {
       uint32_t family_count = chain->blit.queue ? 1 : wsi->queue_family_count;
@@ -2268,6 +2281,10 @@ wsi_signal_semaphore_for_image(struct vk_device *device,
 
    vk_semaphore_reset_temporary(device, semaphore);
 
+   if (image->win32_acquire_sync && chain->wsi->win32.copy_native_sync)
+      return chain->wsi->win32.copy_native_sync(vk_device_to_handle(device),
+         image->win32_acquire_sync, image->win32_acquire_value, &semaphore->temporary);
+
 #ifdef HAVE_LIBDRM
    VkResult result = chain->image_info.explicit_sync ?
       wsi_create_sync_for_image_syncobj(chain, image,
@@ -2297,6 +2314,10 @@ wsi_signal_fence_for_image(struct vk_device *device,
    VK_FROM_HANDLE(vk_fence, fence, _fence);
 
    vk_fence_reset_temporary(device, fence);
+
+   if (image->win32_acquire_sync && chain->wsi->win32.copy_native_sync)
+      return chain->wsi->win32.copy_native_sync(vk_device_to_handle(device),
+         image->win32_acquire_sync, image->win32_acquire_value, &fence->temporary);
 
 #ifdef HAVE_LIBDRM
    VkResult result = chain->image_info.explicit_sync ?
@@ -2732,7 +2753,7 @@ wsi_common_queue_present(const struct wsi_device *wsi,
     */
    {
       STACK_ARRAY(VkCommandBufferSubmitInfo, command_buffer_infos,
-                  pPresentInfo->swapchainCount * 2);
+                  pPresentInfo->swapchainCount * 3);
       STACK_ARRAY(VkSemaphoreSubmitInfo, signal_semaphore_infos,
                   pPresentInfo->swapchainCount *
                   ARRAY_SIZE(image_signal_infos[0].semaphore_infos));
@@ -2798,6 +2819,13 @@ wsi_common_queue_present(const struct wsi_device *wsi,
                .commandBuffer =
                   image->blit.cmd_buffers[queue->queue_family_index],
             };
+            if (image->blit.copy_end_cmd_buffers) {
+               command_buffer_infos[command_buffer_count++] = (VkCommandBufferSubmitInfo) {
+                  .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                  .commandBuffer =
+                     image->blit.copy_end_cmd_buffers[queue->queue_family_index],
+               };
+            }
          }
 
          if (needs_timing_command_buffer) {
@@ -2854,13 +2882,19 @@ wsi_common_queue_present(const struct wsi_device *wsi,
          .semaphore = swapchain->blit.semaphores[image_index],
       };
 
-      VkCommandBufferSubmitInfo command_buffer_infos[2];
+      VkCommandBufferSubmitInfo command_buffer_infos[3];
       uint32_t command_buffer_count = 0;
 
       command_buffer_infos[command_buffer_count++] = (VkCommandBufferSubmitInfo) {
          .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
          .commandBuffer = image->blit.cmd_buffers[0],
       };
+      if (image->blit.copy_end_cmd_buffers) {
+         command_buffer_infos[command_buffer_count++] = (VkCommandBufferSubmitInfo) {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = image->blit.copy_end_cmd_buffers[0],
+         };
+      }
 
       if (needs_timing_command_buffer) {
          command_buffer_infos[command_buffer_count++] = (VkCommandBufferSubmitInfo) {
@@ -3277,6 +3311,12 @@ wsi_cmd_blit_image_to_buffer(VkCommandBuffer cmd_buffer,
           info->image_type == WSI_IMAGE_TYPE_DRM ||
           info->image_type == WSI_IMAGE_TYPE_DXGI);
 
+   if (image->blit.copy_query_pool && image->blit.copy_timing_full) {
+      wsi->CmdResetQueryPool(cmd_buffer, image->blit.copy_query_pool, 0, 2);
+      wsi->CmdWriteTimestamp(cmd_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                              image->blit.copy_query_pool, 0);
+   }
+
    VkImageMemoryBarrier img_mem_barrier = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
       .pNext = NULL,
@@ -3296,7 +3336,8 @@ wsi_cmd_blit_image_to_buffer(VkCommandBuffer cmd_buffer,
       },
    };
    wsi->CmdPipelineBarrier(cmd_buffer,
-                           VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            image->blit.linear_shared ? VK_PIPELINE_STAGE_TRANSFER_BIT :
+                                                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT,
                            0,
                            0, NULL,
@@ -3317,11 +3358,22 @@ wsi_cmd_blit_image_to_buffer(VkCommandBuffer cmd_buffer,
       .imageOffset = { .x = 0, .y = 0, .z = 0 },
       .imageExtent = info->create.extent,
    };
-   wsi->CmdCopyImageToBuffer(cmd_buffer,
+   if (image->blit.copy_query_pool && !image->blit.copy_timing_full) {
+      wsi->CmdResetQueryPool(cmd_buffer, image->blit.copy_query_pool, 0, 2);
+      wsi->CmdWriteTimestamp(cmd_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                              image->blit.copy_query_pool, 0);
+   }
+
+   if (!image->blit.linear_shared)
+      wsi->CmdCopyImageToBuffer(cmd_buffer,
                              image->image,
                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              image->blit.buffer,
                              1, &buffer_image_copy);
+
+   if (image->blit.copy_query_pool && !image->blit.copy_timing_full)
+      wsi->CmdWriteTimestamp(cmd_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                              image->blit.copy_query_pool, 1);
 
    img_mem_barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
    img_mem_barrier.dstAccessMask = 0;
@@ -3342,14 +3394,22 @@ wsi_cmd_blit_image_to_buffer(VkCommandBuffer cmd_buffer,
       .offset = 0,
       .size = VK_WHOLE_SIZE,
    };
+   const VkMemoryBarrier shared_mem_barrier = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+   };
    wsi->CmdPipelineBarrier(cmd_buffer,
-                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            image->blit.linear_shared ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT :
+                                                        VK_PIPELINE_STAGE_TRANSFER_BIT,
                            image->blit.to_foreign_queue
                               ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
                               : VK_PIPELINE_STAGE_HOST_BIT,
                            0,
-                           0, NULL,
-                           1, &buf_mem_barrier,
+                            image->blit.linear_shared ? 1 : 0,
+                            image->blit.linear_shared ? &shared_mem_barrier : NULL,
+                            image->blit.linear_shared ? 0 : 1,
+                            image->blit.linear_shared ? NULL : &buf_mem_barrier,
                            1, &img_mem_barrier);
 }
 
@@ -3465,6 +3525,14 @@ wsi_finish_create_blit_context(const struct wsi_swapchain *chain,
    if (!image->blit.cmd_buffers)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
+   if (image->blit.copy_query_pool && image->blit.copy_timing_full) {
+      image->blit.copy_end_cmd_buffers =
+         vk_zalloc(&chain->alloc, sizeof(VkCommandBuffer) * cmd_buffer_count,
+                   8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      if (!image->blit.copy_end_cmd_buffers)
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+
    for (uint32_t i = 0; i < cmd_buffer_count; i++) {
       if (!chain->cmd_pools[i])
          continue;
@@ -3508,6 +3576,21 @@ wsi_finish_create_blit_context(const struct wsi_swapchain *chain,
       result = wsi->EndCommandBuffer(cmd_buffer);
       if (result != VK_SUCCESS)
          return result;
+
+      if (image->blit.copy_end_cmd_buffers) {
+         VkCommandBuffer *end_cmd = &image->blit.copy_end_cmd_buffers[i];
+         result = wsi->AllocateCommandBuffers(chain->device, &cmd_buffer_info, end_cmd);
+         if (result != VK_SUCCESS)
+            return result;
+         result = wsi->BeginCommandBuffer(*end_cmd, &begin_info);
+         if (result != VK_SUCCESS)
+            return result;
+         wsi->CmdWriteTimestamp(*end_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                 image->blit.copy_query_pool, 1);
+         result = wsi->EndCommandBuffer(*end_cmd);
+         if (result != VK_SUCCESS)
+            return result;
+      }
    }
 
    return VK_SUCCESS;

@@ -12,6 +12,112 @@
 #include "vk_fence.h"
 #include "vk_sync_dummy.h"
 #include "wsi_common_private.h"
+#include "util/os_misc.h"
+#include <stdio.h>
+#include <mutex>
+#include <unordered_map>
+
+/* SNAPRYU frame stats (diagnostic DLL only). TU_FRAMESTAT=<file> gets one line per second:
+ * submit count and CPU time, longest gap between submits, retire-list work, and how many
+ * render passes ran in sysmem/gmem and how often a pass signature switched mode.
+ */
+struct tu_framestat {
+   std::mutex lock;
+   FILE *log = nullptr;
+   uint64_t start_ns = 0, window_ns = 0, last_submit_ns = 0;
+   uint64_t submits = 0, submit_ns = 0, submit_max_ns = 0, gap_max_ns = 0;
+   uint64_t waits = 0, signals = 0;
+   uint64_t retire_calls = 0, retire_ns = 0, retire_max_ns = 0, retire_len_max = 0, retire_freed = 0;
+   uint64_t rp_sysmem = 0, rp_gmem = 0, rp_flips = 0;
+   uint64_t big_sysmem = 0, big_gmem = 0, big_flips = 0;
+   uint64_t block_waits = 0, block_wait_ns = 0, block_wait_max_ns = 0;
+   uint64_t copies = 0, copy_bytes = 0, copy_old_compute = 0, copy_old_compute_bytes = 0;
+   std::unordered_map<uint64_t, uint8_t> last_mode;
+};
+
+static tu_framestat *
+tu_framestat_get(void)
+{
+   return nullptr;
+}
+
+static void
+tu_framestat_flush_locked(tu_framestat *s, uint64_t now)
+{
+   if (!s->window_ns) {
+      s->start_ns = s->window_ns = now;
+      return;
+   }
+   if (now - s->window_ns < 1000000000ull)
+      return;
+   fprintf(s->log,
+           "t=%.1f submits=%llu submit_us_avg=%.1f submit_us_max=%.1f gap_ms_max=%.2f waits=%llu signals=%llu "
+           "retire_calls=%llu retire_us_avg=%.2f retire_us_max=%.1f retire_len_max=%llu retire_freed=%llu "
+           "rp_sysmem=%llu rp_gmem=%llu rp_flips=%llu big_sysmem=%llu big_gmem=%llu big_flips=%llu "
+           "block_waits=%llu block_wait_ms_avg=%.2f block_wait_ms_max=%.2f "
+           "copies=%llu copy_kb=%llu old_compute_copies=%llu old_compute_kb=%llu\n",
+           (now - s->start_ns) / 1e9, (unsigned long long) s->submits,
+           s->submits ? s->submit_ns / 1e3 / s->submits : 0.0, s->submit_max_ns / 1e3, s->gap_max_ns / 1e6,
+           (unsigned long long) s->waits, (unsigned long long) s->signals,
+           (unsigned long long) s->retire_calls, s->retire_calls ? s->retire_ns / 1e3 / s->retire_calls : 0.0,
+           s->retire_max_ns / 1e3, (unsigned long long) s->retire_len_max, (unsigned long long) s->retire_freed,
+           (unsigned long long) s->rp_sysmem, (unsigned long long) s->rp_gmem, (unsigned long long) s->rp_flips,
+           (unsigned long long) s->big_sysmem, (unsigned long long) s->big_gmem, (unsigned long long) s->big_flips,
+           (unsigned long long) s->block_waits, s->block_waits ? s->block_wait_ns / 1e6 / s->block_waits : 0.0,
+           s->block_wait_max_ns / 1e6, (unsigned long long) s->copies, (unsigned long long) (s->copy_bytes >> 10),
+           (unsigned long long) s->copy_old_compute, (unsigned long long) (s->copy_old_compute_bytes >> 10));
+   fflush(s->log);
+   s->submits = s->submit_ns = s->submit_max_ns = s->gap_max_ns = 0;
+   s->waits = s->signals = 0;
+   s->retire_calls = s->retire_ns = s->retire_max_ns = s->retire_len_max = s->retire_freed = 0;
+   s->rp_sysmem = s->rp_gmem = s->rp_flips = 0;
+   s->big_sysmem = s->big_gmem = s->big_flips = 0;
+   s->block_waits = s->block_wait_ns = s->block_wait_max_ns = 0;
+   s->copies = s->copy_bytes = s->copy_old_compute = s->copy_old_compute_bytes = 0;
+   s->window_ns = now;
+}
+
+void tu_framestat_rp(uint64_t sig, bool sysmem, uint32_t width, uint32_t height);
+void tu_framestat_copy(uint64_t bytes, bool old_compute);
+
+/* Counts CmdCopyBuffer2 recordings; old_compute marks copies the pre-nocc driver sent to
+ * the compute path (all regions 16-byte aligned, 64 KiB or more in total). */
+void
+tu_framestat_copy(uint64_t bytes, bool old_compute)
+{
+   tu_framestat *s = tu_framestat_get();
+   if (!s)
+      return;
+   std::lock_guard<std::mutex> guard(s->lock);
+   s->copies++;
+   s->copy_bytes += bytes;
+   if (old_compute) {
+      s->copy_old_compute++;
+      s->copy_old_compute_bytes += bytes;
+   }
+}
+
+
+void
+tu_framestat_rp(uint64_t sig, bool sysmem, uint32_t width, uint32_t height)
+{
+   tu_framestat *s = tu_framestat_get();
+   if (!s)
+      return;
+   const bool big = (uint64_t) width * height >= 640ull * 360ull;
+   const uint8_t mode = sysmem ? 1 : 2;
+   std::lock_guard<std::mutex> guard(s->lock);
+   (sysmem ? s->rp_sysmem : s->rp_gmem)++;
+   if (big)
+      (sysmem ? s->big_sysmem : s->big_gmem)++;
+   uint8_t &last = s->last_mode[sig];
+   if (last && last != mode) {
+      s->rp_flips++;
+      if (big)
+         s->big_flips++;
+   }
+   last = mode;
+}
 
 
 struct wddm_retired_bo {
@@ -156,6 +262,13 @@ wddm_sync_wait(struct vk_device *device, struct vk_sync *sync, uint64_t value,
    NTSTATUS status = D3DKMTWaitForSynchronizationObjectFromCpu(&wait);
    DWORD result = status >= 0 ? WaitForSingleObject(event, timeout) : WAIT_FAILED;
    CloseHandle(event);
+   if (tu_framestat *fs = tu_framestat_get()) {
+      const uint64_t dt = os_time_get_nano() - now;
+      std::lock_guard<std::mutex> guard(fs->lock);
+      fs->block_waits++;
+      fs->block_wait_ns += dt;
+      fs->block_wait_max_ns = MAX2(fs->block_wait_max_ns, dt);
+   }
    MemoryBarrier();
    if (*s->cpu == UINT64_MAX)
       return wddm_check_status(dev);
@@ -185,7 +298,11 @@ wddm_collect_retired(struct tu_device *dev)
    if (vk_device_is_lost_no_report(&dev->vk))
       return;
    auto w = dev->wddm;
+   tu_framestat *fs = tu_framestat_get();
+   const uint64_t fs_start = fs ? os_time_get_nano() : 0;
+   uint64_t fs_freed = 0;
    AcquireSRWLockExclusive(&w->retire_lock);
+   const uint64_t fs_len = w->retired.size();
    for (size_t i = 0; i < w->retired.size();) {
       auto &entry = w->retired[i];
       bool complete = true;
@@ -200,8 +317,18 @@ wddm_collect_retired(struct tu_device *dev)
       MemoryBarrier();
       wddm_bo_release(dev, entry.bo);
       w->retired.erase(w->retired.begin() + i);
+      fs_freed++;
    }
    ReleaseSRWLockExclusive(&w->retire_lock);
+   if (fs) {
+      const uint64_t dt = os_time_get_nano() - fs_start;
+      std::lock_guard<std::mutex> guard(fs->lock);
+      fs->retire_calls++;
+      fs->retire_ns += dt;
+      fs->retire_max_ns = MAX2(fs->retire_max_ns, dt);
+      fs->retire_len_max = MAX2(fs->retire_len_max, fs_len);
+      fs->retire_freed += fs_freed;
+   }
 }
 
 static bool
@@ -840,7 +967,7 @@ static void wddm_submit_add(struct tu_device *, void *submit, struct tu_cs_entry
 }
 
 static VkResult
-wddm_queue_submit(struct tu_queue *queue, void *submission,
+wddm_queue_submit_impl(struct tu_queue *queue, void *submission,
                    struct vk_sync_wait *waits, uint32_t wait_count,
                    struct vk_sync_signal *signals, uint32_t signal_count,
                    struct tu_u_trace_submission_data *)
@@ -931,6 +1058,31 @@ wddm_queue_submit(struct tu_queue *queue, void *submission,
    return wddm_check_status(dev);
 }
 
+static VkResult
+wddm_queue_submit(struct tu_queue *queue, void *submission,
+                   struct vk_sync_wait *waits, uint32_t wait_count,
+                   struct vk_sync_signal *signals, uint32_t signal_count,
+                   struct tu_u_trace_submission_data *u_trace)
+{
+   tu_framestat *fs = tu_framestat_get();
+   if (!fs)
+      return wddm_queue_submit_impl(queue, submission, waits, wait_count, signals, signal_count, u_trace);
+   const uint64_t start = os_time_get_nano();
+   VkResult result = wddm_queue_submit_impl(queue, submission, waits, wait_count, signals, signal_count, u_trace);
+   const uint64_t now = os_time_get_nano();
+   std::lock_guard<std::mutex> guard(fs->lock);
+   fs->submits++;
+   fs->submit_ns += now - start;
+   fs->submit_max_ns = MAX2(fs->submit_max_ns, now - start);
+   if (fs->last_submit_ns)
+      fs->gap_max_ns = MAX2(fs->gap_max_ns, start - fs->last_submit_ns);
+   fs->last_submit_ns = start;
+   fs->waits += wait_count;
+   fs->signals += signal_count + 1;
+   tu_framestat_flush_locked(fs, now);
+   return result;
+}
+
 static VkResult wddm_queue_wait(struct tu_queue *queue, uint32_t fence, uint64_t timeout)
 {
    if (!queue->gfx_timepoint)
@@ -989,6 +1141,244 @@ tu_knl_wddm_memory_budget(struct tu_physical_device *device, uint64_t *budget, u
    }
    *budget = MIN2(*budget, device->heap.size);
    return true;
+}
+
+#include "tu_image.h"
+
+static VkResult
+wddm_native_import(VkDevice device, void *resource,
+                              const VkMemoryAllocateInfo *info, const VkAllocationCallbacks *alloc,
+                              VkDeviceMemory *out)
+{
+   *out = VK_NULL_HANDLE;
+   VK_FROM_HANDLE(tu_device, dev, device);
+   if (!wddm_present_queue(device) || !resource ||
+       !info->allocationSize || info->allocationSize > 64 * 1024 * 1024 ||
+       info->allocationSize % 65536)
+      return VK_ERROR_INITIALIZATION_FAILED;
+   auto texture = (ID3D12Resource *)resource;
+   auto desc = texture->GetDesc();
+   ID3D12Device *owner = NULL;
+   if (FAILED(texture->GetDevice(IID_PPV_ARGS(&owner))))
+      return VK_ERROR_INITIALIZATION_FAILED;
+   auto luid = owner->GetAdapterLuid();
+   auto allocation = owner->GetResourceAllocationInfo(0, 1, &desc);
+   owner->Release();
+   if (memcmp(&luid, &dev->physical_device->wddm_luid, sizeof(luid)) ||
+       desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+       desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM || desc.SampleDesc.Count != 1 ||
+       desc.DepthOrArraySize != 1 || desc.MipLevels != 1 ||
+       allocation.SizeInBytes != info->allocationSize)
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   HANDLE handle = NULL;
+   if (FAILED(texture->GetDevice(IID_PPV_ARGS(&owner))))
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   HRESULT share_result = owner->CreateSharedHandle(texture, NULL, GENERIC_ALL, NULL, &handle);
+   owner->Release();
+   if (FAILED(share_result))
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   auto bo = (struct tu_bo *)calloc(1, sizeof(struct tu_bo));
+   auto mem = (struct tu_device_memory *)vk_device_memory_create(
+      &dev->vk, info, alloc, sizeof(struct tu_device_memory));
+   if (!bo || !mem) {
+      free(bo);
+      if (mem) vk_device_memory_destroy(&dev->vk, alloc, &mem->vk);
+      CloseHandle(handle);
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+   bo->size = info->allocationSize;
+   D3DKMT_QUERYRESOURCEINFOFROMNTHANDLE query = {};
+   query.hDevice = dev->wddm->handle;
+   query.hNtHandle = handle;
+   NTSTATUS status = D3DKMTQueryResourceInfoFromNtHandle(&query);
+   if (status >= 0 && (query.NumAllocations != 1 ||
+       query.TotalPrivateDriverDataSize != 304 ||
+       query.PrivateRuntimeDataSize > 1048576 ||
+       query.ResourcePrivateDriverDataSize > 1048576))
+      status = (NTSTATUS)0xc000000d;
+   if (status >= 0) {
+      std::vector<uint8_t> runtime(query.PrivateRuntimeDataSize);
+      std::vector<uint8_t> private_data(query.ResourcePrivateDriverDataSize);
+      std::vector<uint8_t> allocation_data(query.TotalPrivateDriverDataSize);
+      D3DDDI_OPENALLOCATIONINFO2 ai = {};
+      D3DKMT_OPENRESOURCEFROMNTHANDLE open = {};
+      open.hDevice = dev->wddm->handle;
+      open.hNtHandle = handle;
+      open.NumAllocations = 1;
+      open.pOpenAllocationInfo2 = &ai;
+      open.PrivateRuntimeDataSize = query.PrivateRuntimeDataSize;
+      open.pPrivateRuntimeData = runtime.data();
+      open.ResourcePrivateDriverDataSize = query.ResourcePrivateDriverDataSize;
+      open.pResourcePrivateDriverData = private_data.data();
+      open.TotalPrivateDriverDataBufferSize = query.TotalPrivateDriverDataSize;
+      open.pTotalPrivateDriverDataBuffer = allocation_data.data();
+      status = D3DKMTOpenResourceFromNtHandle(&open);
+      if (status >= 0) {
+         bo->gem_handle = ai.hAllocation;
+         bo->wddm_resource = open.hResource;
+         uint32_t private_size = 0;
+         memcpy(&private_size, allocation_data.data() + 16, sizeof(private_size));
+         if (private_size != bo->size)
+            status = (NTSTATUS)0xc000000d;
+      }
+   }
+   CloseHandle(handle);
+   if (status >= 0) {
+      D3DDDI_MAPGPUVIRTUALADDRESS map = {};
+      map.hPagingQueue = dev->wddm->paging.hPagingQueue;
+      map.hAllocation = bo->gem_handle;
+      map.SizeInPages = bo->size / 4096;
+      map.MinimumAddress = dev->physical_device->va_start;
+      map.MaximumAddress = map.MinimumAddress + dev->physical_device->va_size - 1;
+      map.Protection.Write = 1;
+      status = D3DKMTMapGpuVirtualAddress(&map);
+      if (status >= 0) {
+         bo->iova = map.VirtualAddress;
+         if (!wddm_wait_paging(dev, map.PagingFenceValue))
+            status = (NTSTATUS)0xc0000001;
+      }
+   }
+   if (status >= 0) {
+      D3DDDI_MAKERESIDENT resident = {};
+      resident.hPagingQueue = dev->wddm->paging.hPagingQueue;
+      resident.NumAllocations = 1;
+      resident.AllocationList = &bo->gem_handle;
+      status = D3DKMTMakeResident(&resident);
+      if (status >= 0 && !wddm_wait_paging(dev, resident.PagingFenceValue))
+         status = (NTSTATUS)0xc0000001;
+   }
+   if (status < 0) {
+      fprintf(stderr, "DXGI_WRITE_IMPORT_FAILED status=0x%lx\n", status);
+      wddm_bo_release(dev, bo);
+      vk_device_memory_destroy(&dev->vk, alloc, &mem->vk);
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   }
+   mem->size = info->allocationSize;
+   mem->refcnt = 1;
+   mem->bo = bo;
+   mem->iova = bo->iova;
+   bo->refcnt = 1;
+   bo->base = &mem->vk.base;
+   bo->name = tu_debug_bos_add(dev, bo->size, "DXGI native tiled image");
+   tu_dump_bo_init(dev, bo);
+   p_atomic_add(&dev->physical_device->heap.used, bo->size);
+   *out = tu_device_memory_to_handle(mem);
+   fprintf(stderr, "DXGI_WRITE_IMPORT_PASS bytes=%llu write_protection=1\n", (unsigned long long)bo->size);
+   return VK_SUCCESS;
+}
+
+
+static VkResult
+wddm_native_image(VkDevice device, void *resource, VkImage image_h,
+                  const VkAllocationCallbacks *alloc, VkDeviceMemory *out)
+{
+   VK_FROM_HANDLE(tu_device, dev, device);
+   VK_FROM_HANDLE(tu_image, image, image_h);
+   auto texture = (ID3D12Resource *)resource;
+   auto desc = texture->GetDesc();
+   const auto &layout = image->layout[0];
+   ID3D12Device *owner = NULL;
+   if (FAILED(texture->GetDevice(IID_PPV_ARGS(&owner))))
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   auto allocation = owner->GetResourceAllocationInfo(0, 1, &desc);
+   owner->Release();
+   if (image->vk.format != VK_FORMAT_B8G8R8A8_UNORM ||
+       image->vk.extent.width != desc.Width || image->vk.extent.height != desc.Height ||
+       layout.tile_mode != TILE6_3 || !layout.ubwc ||
+       image->total_size > allocation.SizeInBytes || !layout.slices[0].offset ||
+       layout.ubwc_slices[0].offset || image->vk.array_layers != 1 || image->vk.mip_levels != 1)
+      return VK_ERROR_FORMAT_NOT_SUPPORTED;
+   VkMemoryAllocateInfo info = {};
+   info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+   info.allocationSize = allocation.SizeInBytes;
+   bool found = false;
+   for (uint32_t i = 0; i < dev->physical_device->memory.type_count; i++) {
+      if (dev->physical_device->memory.types[i] & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+         info.memoryTypeIndex = i;
+         found = true;
+         break;
+      }
+   }
+   if (!found)
+      return VK_ERROR_FEATURE_NOT_PRESENT;
+   VkResult result = wddm_native_import(device, resource, &info, alloc, out);
+   if (result == VK_SUCCESS)
+      fprintf(stderr, "WSI_NATIVE_IMAGE width=%u height=%u tile=%u ubwc=%u pitch=%u offset=%llu size=%llu allocation=%llu\n",
+         image->vk.extent.width, image->vk.extent.height, (unsigned)layout.tile_mode,
+         (unsigned)layout.ubwc, fdl_pitch(&layout, 0), (unsigned long long)layout.slices[0].offset,
+         (unsigned long long)image->total_size, (unsigned long long)allocation.SizeInBytes);
+   return result;
+}
+
+static VkResult
+wddm_native_create_sync(VkDevice device, void **native, void **d3d_fence)
+{
+   VK_FROM_HANDLE(tu_device, dev, device);
+   *native = NULL;
+   *d3d_fence = NULL;
+   struct vk_sync *sync = NULL;
+   VkResult result = vk_sync_create(&dev->vk, &wddm_sync_type, (vk_sync_flags)0, 0, &sync);
+   if (result != VK_SUCCESS)
+      return result;
+   auto s = (struct wddm_sync *)sync;
+   OBJECT_ATTRIBUTES attributes = {};
+   attributes.Length = sizeof(attributes);
+   HANDLE handle = NULL;
+   HRESULT hr = E_FAIL;
+   if (D3DKMTShareObjects(1, &s->handle, &attributes, GENERIC_ALL, &handle) >= 0) {
+      hr = dev->wddm->d3d->OpenSharedHandle(handle, IID_PPV_ARGS(&s->d3d_fence));
+      CloseHandle(handle);
+   }
+   if (FAILED(hr)) {
+      vk_sync_destroy(&dev->vk, sync);
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   }
+   s->d3d_fence->AddRef();
+   *native = sync;
+   *d3d_fence = s->d3d_fence;
+   return VK_SUCCESS;
+}
+
+static VkResult
+wddm_native_copy_sync(VkDevice device, void *native, uint64_t value, struct vk_sync **out)
+{
+   VK_FROM_HANDLE(tu_device, dev, device);
+   *out = NULL;
+   auto source = (struct wddm_sync *)native;
+   OBJECT_ATTRIBUTES attributes = {};
+   attributes.Length = sizeof(attributes);
+   HANDLE handle = NULL;
+   if (!value || D3DKMTShareObjects(1, &source->handle, &attributes, GENERIC_ALL, &handle) < 0)
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   D3DKMT_OPENSYNCOBJECTFROMNTHANDLE2 open = {};
+   open.hNtHandle = handle;
+   open.hDevice = dev->wddm->handle;
+   open.MonitoredFence.EngineAffinity = 1;
+   NTSTATUS status = D3DKMTOpenSyncObjectFromNtHandle2(&open);
+   CloseHandle(handle);
+   if (status < 0)
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   auto s = (struct wddm_sync *)vk_zalloc(&dev->vk.alloc, sizeof(struct wddm_sync), 8,
+                                         VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+   if (!s) {
+      D3DKMT_DESTROYSYNCHRONIZATIONOBJECT destroy = {};
+      destroy.hSyncObject = open.hSyncObject;
+      D3DKMTDestroySynchronizationObject(&destroy);
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+   s->base.type = &wddm_sync_type;
+   s->handle = open.hSyncObject;
+   s->cpu = (volatile uint64_t *)open.MonitoredFence.FenceValueCPUVirtualAddress;
+   s->target = value;
+   *out = &s->base;
+   return VK_SUCCESS;
+}
+
+static void
+wddm_native_destroy_sync(VkDevice device, void *native)
+{
+   VK_FROM_HANDLE(tu_device, dev, device);
+   vk_sync_destroy(&dev->vk, (struct vk_sync *)native);
 }
 
 static VkResult
@@ -1052,6 +1442,10 @@ wddm_add_adapter(struct tu_instance *instance, D3DKMT_ADAPTERINFO *adapter)
    device->wsi_device.win32.get_d3d12_command_queue = wddm_present_queue;
    device->wsi_device.win32.get_d3d12_fence = wddm_present_fence;
    device->wsi_device.win32.create_buffer_memory = wddm_present_buffer;
+   device->wsi_device.win32.import_native_image = wddm_native_image;
+   device->wsi_device.win32.create_native_sync = wddm_native_create_sync;
+   device->wsi_device.win32.copy_native_sync = wddm_native_copy_sync;
+   device->wsi_device.win32.destroy_native_sync = wddm_native_destroy_sync;
    const auto available_features = device->vk.supported_features;
    const auto available_extensions = device->vk.supported_extensions;
    device->vk.supported_extensions = {};
