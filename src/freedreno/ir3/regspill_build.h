@@ -1,0 +1,4 @@
+#ifndef SNAPRYU_REGSPILL_DIAGNOSTIC
+#define SNAPRYU_REGSPILL_DIAGNOSTIC 0
+#endif
+#define REGSPILL_LOG(...) do { if (SNAPRYU_REGSPILL_DIAGNOSTIC) fprintf(stderr, __VA_ARGS__); } while (0)

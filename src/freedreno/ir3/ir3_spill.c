@@ -6,6 +6,7 @@
 #include "util/rb_tree.h"
 #include "ir3_ra.h"
 #include "ir3_shader.h"
+#include "regspill_build.h"
 
 /*
  * This pass does two things:
@@ -2170,6 +2171,145 @@ ir3_calc_pressure(struct ir3_shader_variant *v, struct ir3_liveness *live,
    ralloc_free(ctx);
 }
 
+extern bool ir3_audit_regspill_trial(void);
+extern void ir3_audit_regspill_mark(void);
+struct audit_regspill_pair {
+   unsigned offset;
+   struct ir3_instruction *store, *load, *backup;
+   struct ir3_instruction saved_load;
+   struct ir3_register *saved_src0;
+};
+
+static bool
+audit_try_register_backing(struct ir3 *ir, struct ir3_shader_variant *v,
+                          struct ir3_liveness **live,
+                          const struct ir3_pressure *limits,
+                          unsigned original_private, unsigned slots)
+{
+   if (!ir3_audit_regspill_trial() || original_private ||
+       !v->mergedregs || v->type != MESA_SHADER_COMPUTE ||
+       limits->half != 192 || limits->full != 384 || slots > 256)
+      return false;
+
+   void *mem_ctx = ralloc_parent(*live);
+   struct audit_regspill_pair *pairs =
+      rzalloc_array(NULL, struct audit_regspill_pair, 128);
+   if (!pairs)
+      return false;
+   unsigned count = 0;
+   bool supported = true;
+   foreach_block (block, &ir->block_list) {
+      foreach_instr (instr, &block->instr_list) {
+         if (instr->opc != OPC_SPILL_MACRO && instr->opc != OPC_RELOAD_MACRO)
+            continue;
+         if (instr->cat6.type != TYPE_U16 || instr->srcs_count != 3 ||
+             instr->srcs[2]->uim_val != 1 || instr->repeat || instr->deps_count) {
+            supported = false;
+            break;
+         }
+         unsigned offset = instr->opc == OPC_SPILL_MACRO ?
+            instr->cat6.dst_offset : instr->srcs[1]->uim_val;
+         unsigned n = 0;
+         while (n < count && pairs[n].offset != offset)
+            n++;
+         if (instr->opc == OPC_SPILL_MACRO) {
+            if (n != count || count == 128 ||
+                instr->srcs[1]->flags & (IR3_REG_ARRAY | IR3_REG_RELATIV) ||
+                !instr->srcs[1]->def) {
+               supported = false;
+               break;
+            }
+            pairs[count].offset = offset;
+            pairs[count++].store = instr;
+         } else {
+            if (n == count || pairs[n].load || pairs[n].store->block != block ||
+                instr->dsts_count != 1 || reg_elems(instr->dsts[0]) != 1 ||
+                instr->dsts[0]->flags & IR3_REG_ARRAY) {
+               supported = false;
+               break;
+            }
+            pairs[n].load = instr;
+         }
+      }
+      if (!supported)
+         break;
+   }
+   if (count == 0)
+      supported = false;
+   for (unsigned n = 0; n < count; n++)
+      supported &= pairs[n].load != NULL;
+   if (!supported) {
+      ralloc_free(pairs);
+      return false;
+   }
+
+   for (unsigned n = 0; n < count; n++) {
+      struct audit_regspill_pair *pair = &pairs[n];
+      struct ir3_instruction *mov =
+         ir3_instr_create_at(ir3_before_instr(pair->store), OPC_MOV, 1, 1);
+      struct ir3_register *dst = __ssa_dst(mov);
+      dst->wrmask = 1;
+      struct ir3_register *src =
+         ir3_src_create(mov, INVALID_REG, IR3_REG_SSA | IR3_REG_HALF);
+      src->def = pair->store->srcs[1]->def;
+      src->wrmask = 1;
+      mov->cat1.src_type = TYPE_U16;
+      mov->cat1.dst_type = TYPE_U32;
+      pair->backup = mov;
+      pair->saved_load = *pair->load;
+      pair->saved_src0 = pair->load->srcs[0];
+      pair->load->opc = OPC_MOV;
+      pair->load->srcs_count = 0;
+      struct ir3_register *reload_src =
+         ir3_src_create(pair->load, INVALID_REG, IR3_REG_SSA);
+      reload_src->def = dst;
+      reload_src->wrmask = 1;
+      memset(&pair->load->cat1, 0, sizeof(pair->load->cat1));
+      pair->load->cat1.src_type = TYPE_U32;
+      pair->load->cat1.dst_type = TYPE_U16;
+      list_delinit(&pair->store->node);
+   }
+
+   ralloc_free(*live);
+   *live = ir3_calc_liveness(mem_ctx, ir);
+   fixup_merge_sets(*live, ir);
+   struct ir3_pressure pressure;
+   ir3_calc_pressure(v, *live, &pressure);
+   unsigned cap = limits->full;
+   const char *cap_env = SNAPRYU_REGSPILL_DIAGNOSTIC ? getenv("IR3_REGSPILL_CAP") : NULL;
+   if (cap_env)
+      cap = MIN2(cap, (unsigned)strtoul(cap_env, NULL, 10));
+   if (pressure.full > cap || pressure.half > limits->half ||
+       pressure.shared > limits->shared || pressure.shared_half > limits->shared_half) {
+      for (unsigned n = 0; n < count; n++) {
+         struct audit_regspill_pair *pair = &pairs[n];
+         pair->load->opc = pair->saved_load.opc;
+         pair->load->cat6 = pair->saved_load.cat6;
+         pair->load->srcs_count = pair->saved_load.srcs_count;
+         pair->load->srcs[0] = pair->saved_src0;
+         ir3_instr_move_before(pair->store, pair->backup);
+         list_delinit(&pair->backup->node);
+      }
+      ralloc_free(*live);
+      *live = ir3_calc_liveness(mem_ctx, ir);
+      fixup_merge_sets(*live, ir);
+      REGSPILL_LOG("REGSPILL shader=%u pairs=%u action=fallback full=%u half=%u cap=%u\n",
+              v->shader_id, count, pressure.full, pressure.half, cap);
+      ralloc_free(pairs);
+      return false;
+   }
+
+   ralloc_free(*live);
+   *live = ir3_calc_liveness(mem_ctx, ir);
+   fixup_merge_sets(*live, ir);
+   ir3_calc_pressure(v, *live, &pressure);
+   REGSPILL_LOG("REGSPILL shader=%u pairs=%u action=accepted full=%u half=%u cap=%u\n",
+           v->shader_id, count, pressure.full, pressure.half, cap);
+   ralloc_free(pairs);
+   ir3_audit_regspill_mark();
+   return true;
+}
+
 bool
 ir3_spill(struct ir3 *ir, struct ir3_shader_variant *v,
           struct ir3_liveness **live,
@@ -2217,6 +2357,9 @@ ir3_spill(struct ir3 *ir, struct ir3_shader_variant *v,
    *live = ir3_calc_liveness(mem_ctx, ir);
 
    fixup_merge_sets(*live, ir);
+
+   if (audit_try_register_backing(ir, v, live, limit_pressure, v->pvtmem_size, ctx->spill_slot))
+      ctx->spill_slot = v->pvtmem_size;
 
    v->pvtmem_size = ctx->spill_slot;
    ralloc_free(ctx);

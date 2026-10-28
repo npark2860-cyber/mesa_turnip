@@ -19,6 +19,7 @@
 #include "ir3_nir.h"
 #include "ir3_parser.h"
 #include "ir3_shader.h"
+#include "regspill_build.h"
 #include "util/memstream.h"
 
 #include "nir/nir.h"
@@ -507,10 +508,63 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
    }
 }
 
+
+static _Thread_local bool audit_trial_active, audit_trial_modified;
+static unsigned audit_accepted_count, audit_retry_count;
+bool ir3_audit_regspill_trial(void);
+bool ir3_audit_regspill_modified(void);
+void ir3_audit_regspill_mark(void);
+
+bool ir3_audit_regspill_trial(void) { return audit_trial_active; }
+bool ir3_audit_regspill_modified(void) { return audit_trial_modified; }
+void ir3_audit_regspill_mark(void) { audit_trial_modified = true; }
+
+static int
+audit_compile_with_retry(struct ir3_shader *shader, struct ir3_shader_variant *v)
+{
+   const char *enable = getenv("IR3_REGSPILL_AUDIT");
+   if ((enable && strcmp(enable, "1")) || v->type != MESA_SHADER_COMPUTE ||
+       v->binning_pass || !v->mergedregs || !v->const_state)
+      return ir3_compile_shader_nir(shader->compiler, shader, v);
+
+   struct ir3_shader_variant *trial = rzalloc(v, struct ir3_shader_variant);
+   if (!trial)
+      return ir3_compile_shader_nir(shader->compiler, shader, v);
+   *trial = *v;
+   trial->const_state = rzalloc(trial, struct ir3_const_state);
+   if (!trial->const_state) {
+      ralloc_free(trial);
+      return ir3_compile_shader_nir(shader->compiler, shader, v);
+   }
+   *trial->const_state = *v->const_state;
+   audit_trial_active = true;
+   audit_trial_modified = false;
+   int ret = ir3_compile_shader_nir(shader->compiler, shader, trial);
+   bool modified = audit_trial_modified;
+   audit_trial_active = false;
+   audit_trial_modified = false;
+   if (!ret) {
+      ralloc_free(v->const_state);
+      *v = *trial;
+      ralloc_adopt(v, trial);
+      ralloc_free(trial);
+      if (modified)
+         REGSPILL_LOG("REGSPILL_RESULT shader=%u accepted_total=%u retry_total=%u outcome=accepted\n",
+                 v->shader_id, p_atomic_inc_return(&audit_accepted_count), p_atomic_read(&audit_retry_count));
+      return 0;
+   }
+   ralloc_free(trial);
+   unsigned retry = p_atomic_inc_return(&audit_retry_count);
+   ret = ir3_compile_shader_nir(shader->compiler, shader, v);
+   REGSPILL_LOG("REGSPILL_RESULT shader=%u accepted_total=%u retry_total=%u outcome=memory_retry result=%d modified=%u\n",
+           v->shader_id, p_atomic_read(&audit_accepted_count), retry, ret, modified);
+   return ret;
+}
+
 static bool
 compile_variant(struct ir3_shader *shader, struct ir3_shader_variant *v)
 {
-   int ret = ir3_compile_shader_nir(shader->compiler, shader, v);
+   int ret = audit_compile_with_retry(shader, v);
    if (ret) {
       mesa_loge("compile failed! (%s:%s)", shader->nir->info.name,
                 shader->nir->info.label);

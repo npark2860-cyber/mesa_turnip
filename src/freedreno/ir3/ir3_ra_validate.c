@@ -6,6 +6,9 @@
 #include "util/ralloc.h"
 #include "ir3_ra.h"
 #include "ir3_shader.h"
+#include "regspill_build.h"
+extern bool ir3_audit_ra_recovery_active(void);
+extern void ir3_audit_ra_failure(const char *reason);
 
 /* This file implements a validation pass for register allocation. We check
  * that the assignment of SSA values to registers is "valid", in the sense
@@ -97,9 +100,24 @@ struct ra_val_ctx {
    bool failed;
 };
 
+static _Thread_local struct ra_val_ctx *audit_val_current;
+#define audit_val_assert(condition) do { \
+   if (ir3_audit_ra_recovery_active() && !(condition)) { \
+      ralloc_free(audit_val_current); \
+      audit_val_current = NULL; \
+      ir3_audit_ra_failure(#condition); \
+   } \
+   assert(condition); \
+} while (0)
+
 static void
 validate_error(struct ra_val_ctx *ctx, const char *condstr)
 {
+   if (ir3_audit_ra_recovery_active()) {
+      audit_val_current = NULL;
+      ralloc_free(ctx);
+      ir3_audit_ra_failure(condstr);
+   }
    fprintf(stderr, "ra validation fail: %s\n", condstr);
    fprintf(stderr, "  -> for instruction: ");
    ir3_print_instr(ctx->current_instr);
@@ -426,7 +444,7 @@ propagate_parallelcopy(struct ra_val_ctx *ctx, struct ir3_instruction *pcopy)
 
       offset += reg_size(dst);
    }
-   assert(offset == size);
+   audit_val_assert(offset == size);
 
    offset = 0;
    for (unsigned i = 0; i < pcopy->dsts_count; i++) {
@@ -445,7 +463,7 @@ propagate_parallelcopy(struct ra_val_ctx *ctx, struct ir3_instruction *pcopy)
 
       offset += reg_size(dst);
    }
-   assert(offset == size);
+   audit_val_assert(offset == size);
 }
 
 static void
@@ -458,7 +476,7 @@ propagate_spill(struct ra_val_ctx *ctx, struct ir3_instruction *instr)
              reg_size(instr->srcs[0]) * sizeof(struct reg_state));
    } else { /* reload */
       struct reg_state *state = get_spill_state(ctx, instr->srcs[0]->def);
-      assert(state);
+      audit_val_assert(state);
       physreg_t dst_physreg = ra_reg_get_physreg(instr->dsts[0]);
       memcpy(&ctx->reaching.shared.regs[dst_physreg], state,
              reg_size(instr->dsts[0]) * sizeof(struct reg_state));
@@ -548,7 +566,7 @@ chase_definition(struct reg_state *state)
                break;
             }
          }
-         assert(dst_idx != ~0);
+         audit_val_assert(dst_idx != ~0);
 
          struct ir3_register *new_def = instr->srcs[dst_idx]->def;
          if (new_def) {
@@ -575,7 +593,7 @@ dump_reg_state(struct reg_state *state)
               "more than one reaching definition or partial definition");
    } else {
       /* The analysis should always remove UNKNOWN eventually. */
-      assert(state->def != UNKNOWN);
+      audit_val_assert(state->def != UNKNOWN);
 
       const char *prefix = "r";
       unsigned num = state->def->num / 4;
@@ -692,6 +710,11 @@ check_reaching_defs(struct ra_val_ctx *ctx, struct ir3 *ir)
    }
 
    if (ctx->failed) {
+      if (ir3_audit_ra_recovery_active()) {
+         audit_val_current = NULL;
+         ralloc_free(ctx);
+         ir3_audit_ra_failure("reaching_definitions");
+      }
       fprintf(stderr, "failing shader:\n");
       ir3_print(ir);
       abort();
@@ -708,10 +731,11 @@ ir3_ra_validate(struct ir3_shader_variant *v, unsigned full_size,
 #define VALIDATE 1
 #endif
 
-   if (!VALIDATE)
+   if (!VALIDATE && !ir3_audit_ra_recovery_active())
       return;
 
    struct ra_val_ctx *ctx = rzalloc(NULL, struct ra_val_ctx);
+   audit_val_current = ctx;
    ctx->merged_regs = v->mergedregs;
    ctx->full_size = full_size;
    ctx->half_size = half_size;
@@ -729,5 +753,6 @@ ir3_ra_validate(struct ir3_shader_variant *v, unsigned full_size,
 
    check_reaching_defs(ctx, v->ir);
 
+   audit_val_current = NULL;
    ralloc_free(ctx);
 }
