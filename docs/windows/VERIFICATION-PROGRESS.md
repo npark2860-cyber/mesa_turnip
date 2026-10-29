@@ -329,10 +329,14 @@ Hardware test log (item 13):
   with every new DLL (the pipeline cache UUID follows the driver build);
   measure performance from the second launch on.
 - 2026-10-29 18:50 UTC, same setup after the cache rebuild: the user reports
-  Tears of the Kingdom holding 60 fps almost regardless of camera angle;
-  with the previous driver DLL, looking down always dropped it to about
-  40 fps. Subjective report, same device and SnapRYU build; log numbers
-  are still to come. No hang or device loss so far.
+  Tears of the Kingdom holding 60 fps on screen almost regardless of camera
+  angle; with the previous driver DLL, looking down always dropped it to
+  about 40. The 60 is the LSFG (frame generation) output rate: the native
+  game rate in the Eden log is 30.02 fps, which is the game's cap, at 71%
+  GPU load; the earlier 40 corresponds to roughly 20 fps native
+  (estimate). Native figures of 21-29 fps also appear in the log. Same
+  device and SnapRYU build; no hang or device loss so far; the 1-hour
+  stability run is pending.
 
 Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
