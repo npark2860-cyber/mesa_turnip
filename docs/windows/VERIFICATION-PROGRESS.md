@@ -337,7 +337,7 @@ Hardware test log (item 13):
   (estimate). Native figures of 21-29 fps also appear in the log. Same
   device and SnapRYU build; no hang or device loss so far; the 1-hour
   stability run is pending.
-- Attribution of the gain (analysis, not yet A/B tested): the buffer-blit
+- Attribution of the gain (analysis, no A/B test): the buffer-blit
   path copies each presented image into the current DXGI back buffer on
   the D3D12 queue, and the image becomes acquirable only once that copy
   has executed; the copy in turn waits in the D3D12 queue until DWM hands
@@ -349,10 +349,11 @@ Hardware test log (item 13):
   calls per submit (well under 1 ms per frame), F8 only affects compute
   shaders with `DerivativeGroupLinear`, which Eden does not emit, F7's
   macros are not used on the WDDM path, the rest are correctness fixes.
-  To confirm: compare the 40f8ba7 release DLL (F1-F4 only) on the same
-  scene, and if needed a build with `maxImageCount` back at 2. The
-  comparison is only fair if the Qualcomm KMD/driver package version was
-  the same for the "before" measurement.
+  An A/B check (the 40f8ba7 release DLL, or a build with `maxImageCount`
+  back at 2, on the same scene) would confirm it; the user chose not to
+  run one, so this stays the likely cause, unconfirmed. The comparison is
+  also only fair if the Qualcomm KMD/driver package version was the same
+  for the "before" measurement.
 
 Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
