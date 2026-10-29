@@ -162,8 +162,8 @@ struct BitmaskEnum {
 
 #define BIT(bit) BITFIELD64_BIT(bit)
 
-#define U642VOID(x) ((void *)(unsigned long)(x))
-#define VOID2U64(x) ((uint64_t)(unsigned long)(x))
+#define U642VOID(x) ((void *)(uintptr_t)(x))
+#define VOID2U64(x) ((uint64_t)(uintptr_t)(x))
 
 /* Convert 19.2MHz RBBM always-on timer ticks to ns */
 static inline uint64_t

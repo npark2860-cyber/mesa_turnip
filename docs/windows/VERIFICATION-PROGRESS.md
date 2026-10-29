@@ -8,7 +8,14 @@ Branch: `claude/project-thread-btvgxr`
 Baseline: commit 16f87fb ("freedreno: normalize Windows paths in the XML include check")
 Policy-note: biblioklept
 
-## Scope (Windows-specific code)
+## Scope
+
+Pass 1 covered the Windows-specific code listed below. Pass 2 (after the
+user asked for the whole driver to be reviewed) covered all of `src/freedreno`
+(ir3 compiler, fdl layout/tiling, common, vulkan) with the static analyzers
+listed under "Whole-driver static analysis".
+
+### Pass 1: Windows-specific code
 
 - `src/freedreno/vulkan/tu_knl_wddm.cc` — WDDM backend (sync objects, BO alloc,
   VA management, submit, present interop, timestamps, adapter enumeration)
@@ -51,7 +58,16 @@ Policy-note: biblioklept
 - [x] 7. Apply performance improvements
 - [x] 8. Re-run build + syntax checks after changes (all pass)
 - [x] 9. Commit, push, open PR (https://github.com/npark2860-cyber/mesa_turnip/pull/1)
-- [ ] 10. Hardware validation by the user (Snapdragon X Elite / Eden) of the
+- [x] 10. Whole-driver static analysis (clang -Wshadow/-Wextra build, clang-tidy
+      clang-analyzer + bugprone over all 107 freedreno sources, clang-tidy over
+      the two Windows files with the mingw clang flags); triage of all 526
+      findings; fixes F5/F6 committed
+- [x] 11. mingw-w64 cross build of the whole Windows driver (gcc 13, LLP64) to
+      reproduce the warnings seen in the native PC build; found and fixed the
+      two pointer-to-int casts (F7), identified the macro redefinition (F6)
+- [ ] 11b. Locate the remaining PC-build warnings from the clang build log
+      (bitfield-constant-conversion x5, invalid-noreturn x1) and decide
+- [ ] 12. Hardware validation by the user (Snapdragon X Elite / Eden) of the
       items marked NEEDS-HW-TEST below
 
 ## Findings
@@ -78,6 +94,23 @@ Policy-note: biblioklept
   does not have the acquire-order restriction, so it now reports
   `minImageCount = 2, maxImageCount = 4`, letting Eden triple-buffer instead
   of being forced into double buffering. NEEDS-HW-TEST (frame pacing / FPS).
+- F5. `src/freedreno/common/freedreno_rd_output.c` `fd_rd_output_fini`: freed
+  `output->name` and then used it to build the trigger file path for
+  `unlink` (use after free; only reached with `FD_RD_DUMP` trigger mode at
+  device teardown). Found by clang-analyzer (unix.Malloc). The free now
+  happens after the path is built. Present in upstream Mesa as well.
+- F6. `tu_query_pool.cc` defined `WAIT_TIMEOUT`, which collides with the
+  Windows SDK `WAIT_TIMEOUT` (0x102) macro and produced the
+  `-Wmacro-redefined` warning in the PC build. The local definition came
+  last so the 5 s value was in effect, but it depended on include order.
+  Renamed to `TU_QUERY_WAIT_TIMEOUT_SEC`.
+- F7. `src/freedreno/common/freedreno_common.h` `U642VOID` / `VOID2U64` and
+  `ir3.c` `block_id()` cast pointers through `unsigned long`, which is 32
+  bits on Windows (LLP64): the `-Wpointer-to-int-cast` pair from the PC
+  build. `VOID2U64` is expanded in `freedreno_perfcntr.c`, which is linked
+  into the Windows driver; the truncated pointer only ever reaches the msm
+  DRM ioctl (not compiled on Windows), so no crash today, but the cast is
+  now `uintptr_t`, which is correct on every ABI.
 
 ### Reviewed, OK as-is
 
@@ -98,6 +131,84 @@ Policy-note: biblioklept
   `tu_CmdBindPipeline` touches for compute.
 - Mutex/condvar port (C11 `mtx_t` / `cnd_t`) is complete; no remaining
   `pthread_*` uses in Windows-compiled paths.
+
+### Whole-driver static analysis (pass 2) — how it was run and what it found
+
+1. clang 18 build of the Linux turnip with `-Wshadow -Wextra` added
+   (`build-clang`): 266 warnings, all pre-existing `-Wshadow` in freedreno
+   plus one deprecated `reg_builder` pragma. No new warnings from the fork.
+2. `run-clang-tidy-18 -p build-clang` over all 107 `src/freedreno` sources with
+   `-checks=-*,clang-analyzer-*,bugprone-*` minus the style-only bugprone
+   checks (easily-swappable-parameters, narrowing-conversions,
+   reserved-identifier, macro-parentheses, branch-clone, implicit-widening,
+   assignment-in-if-condition, switch-missing-default-case,
+   suspicious-include, misplaced-widening-cast, signed-char-misuse,
+   multi-level-implicit-pointer-conversion, casting-through-void,
+   not-null-terminated-result, unchecked-optional-access, empty-catch,
+   optin.performance.Padding, security.insecureAPI). 526 findings:
+   - 303 `optin.core.EnumCastOutOfRange`: all intentional flag-combining or
+     `~0` sentinel casts (`enum tu_bo_alloc_flags`, `gl_access_qualifier`,
+     `nir_variable_mode`, `enum global_shader`, ...). No action.
+   - 100 `core.NullDereference`: analyzer paths through `ir3_get_dst`,
+     `VK_FROM_HANDLE` null handles, `subpass->pDepthStencilAttachment`
+     when a DS resolve is present (spec guarantees non-NULL),
+     `image_view_info` when cubic props are requested (spec VUID), the
+     `attachments` array with zero attachments, the `mem == NULL` branch in
+     `tu_BindBufferMemory2` (memory is a required handle in vk.xml). No
+     action.
+   - 57 `bugprone-sizeof-expression`: `sizeof(struct x *)` for arrays of
+     pointers and `ARRAY_SIZE` on `DRAW_REGS<CHIP>` templates. No action.
+   - 12 `non-zero-enum-to-bool-conversion`: `tu_cmd_flush_bits` tests. No
+     action.
+   - 10 `deadcode.DeadStores`, 10 `CallAndMessage`, 7
+     `UndefinedBinaryOperatorResult`, 7 `NonNullParamChecker`, 4
+     `uninitialized.Assign`, 2 `uninitialized.Branch`, 1 `DivideZero`, 1
+     `VLASize`, 1 `UnixAPI`: VLA/array fills the analyzer cannot follow
+     (`srcs[]`, `bs[]`, `srcs_rpt[]`, `comps[]`), `memcpy`/`qsort` with a
+     NULL pointer and zero size, `% file_size` with a non-empty register
+     file. No action.
+   - 4 `suspicious-string-compare` / 2 `suspicious-memory-comparison`:
+     `memcmp` on `struct ir3_legalize_state` and `regmask_t`, compared
+     against a copy of the same struct so padding bytes match. No action.
+   - 2 `bugprone-integer-division` in `tu_subsampled_image.cc` (the bin start
+     divided by the fragment area before conversion to float): upstream
+     fragment-density-map code, bins are fragment-area aligned, not used by
+     Eden. Left as is.
+   - 2 `unix.Malloc`: `tu_rmv.cc` `pool_sizes` ownership passes to the RMV
+     token (no leak); `freedreno_rd_output.c` use after free -> F5.
+3. clang-tidy with the same checks over `tu_knl_wddm.cc` and
+   `wsi_common_win32.cpp` using the mingw clang command from the syntax
+   check: 4 findings, all paths excluded by the callers (`wddm_bo_map` is
+   only called with a live BO; the DXGI swapchain path is only entered when
+   `get_d3d12_command_queue`, the DXGI factory and the DComposition device
+   exist, and `surface->current_swapchain` is only set on that path).
+4. Cosmetic, not changed: `tu_device.cc` `sizeof(struct
+   tu_debug_bos_entryos_entry *)` typo in the debug BO statistics (pointer
+   size is the same, upstream has the same text); `tu_shader.cc`
+   `tu_upload_shader` tests `v` for NULL once and then dereferences it
+   unconditionally.
+
+### mingw-w64 cross build (pass 2) — how it was run and what it found
+
+`apt install libz-mingw-w64-dev`, then a meson cross file for
+`x86_64-w64-mingw32-gcc`/`g++` (`system = 'windows'`, `pkg_config_libdir =
+/usr/x86_64-w64-mingw32/lib/pkgconfig`), the PC build's meson options
+(`-Dplatforms=windows -Dvulkan-drivers=freedreno -Dfreedreno-kmds=wddm
+-Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false -Dllvm=disabled
+-Dbuild-tests=false -Dperfetto=false -Dc_args=-D_USE_MATH_DEFINES
+-Dcpp_args=-DNOMINMAX`) and `-isystem` pointing at the win32metadata
+`d3dkmthk.h`/`d3dkmdt.h`/`d3dukmdt.h` copies. `ninja -k 0` compiled 689 of 693
+objects, including `tu_knl_wddm.cc`, `wsi_common_win32.cpp`, `tu_device.cc`
+and every ir3/fdl/common file. The four that did not: the DirectX-Headers
+`dxguids.cpp` (mingw's own older `d3d12.h` shadows the subproject's, an
+environment issue), the `ir3_disasm` / `ir3_delay_test` test programs
+(`fmemopen`, `err.h` are POSIX-only; they are not part of the driver), and the
+final DLL link that depends on them. Warnings: 2 `-Wpointer-to-int-cast` (F7),
+63 `-Waddress` on `if (ir3_assert_handler)` (the handler is non-weak on
+Windows so the test is always true; harmless), 1 `PACKED` redefinition
+between `instr-a3xx.h` and the mingw-specific `gcc_struct` variant in
+`util/macros.h` (mingw only; the PC clang build defines both identically),
+1 unused variable in `nir_validate.c` (upstream).
 
 ### OPEN (possible follow-ups, not changed)
 

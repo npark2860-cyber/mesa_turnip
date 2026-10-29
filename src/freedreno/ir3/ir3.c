@@ -682,7 +682,7 @@ block_id(struct ir3_block *block)
 {
    if (block->nblock)
       return block->nblock->index;
-   return (uint32_t)(unsigned long)block;
+   return (uint32_t)(uintptr_t)block;
 }
 
 struct ir3_instruction *

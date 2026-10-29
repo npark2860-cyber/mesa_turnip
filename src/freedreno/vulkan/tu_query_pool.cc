@@ -26,7 +26,7 @@
 #include "tu_rmv.h"
 
 #define NSEC_PER_SEC 1000000000ull
-#define WAIT_TIMEOUT 5
+#define TU_QUERY_WAIT_TIMEOUT_SEC 5
 #define __COUNTER_REG(CHIP, name) __RBBM_PIPESTAT_ ## name <CHIP>({})
 #define COUNTER_REG(name) __COUNTER_REG(CHIP, name)
 
@@ -623,7 +623,7 @@ wait_for_available(struct tu_device *device, struct tu_query_pool *pool,
     * upstream. */
    struct query_slot *slot = slot_address(pool, query);
    uint64_t abs_timeout = os_time_get_absolute_timeout(
-         WAIT_TIMEOUT * NSEC_PER_SEC);
+         TU_QUERY_WAIT_TIMEOUT_SEC * NSEC_PER_SEC);
    while(os_time_get_nano() < abs_timeout) {
       if (query_is_available(slot))
          return VK_SUCCESS;
