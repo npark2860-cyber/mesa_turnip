@@ -301,6 +301,8 @@ its own new folder under `opus-spot\`; nothing existing was modified.
   4C99BC7774A0E42E519A7989D78BEF17C5387E318BDA8D1ED2A17CB4547D04A3.
   Compile + link 68.5 s (710 ninja steps). `build-info.json` records the
   source commit, the patch list and the hand merge.
+  2026-10-29: the user bundled this DLL into the SnapRYU z8 and z8d builds
+  as the driver under hardware test.
 
 Checks run on the pr1b build: `meson-setup.log` shows `buildtype : release`
 and `b_ndebug : true`; all 579 commands in `compile_commands.json` carry
