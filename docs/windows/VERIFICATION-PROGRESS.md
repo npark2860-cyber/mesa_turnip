@@ -72,9 +72,9 @@ listed under "Whole-driver static analysis".
 - [x] 12. Independent cross-review of the PR diff (three reviewer agents with
       distinct lenses, each finding then handed to two refuters). The WDDM
       submit lens and the shared-code lens completed and reported two
-      follow-ups, both fixed (F9, F10); the presentation/performance lens and
-      the refuters did not run because the session hit its usage limit
-      (resets 18:00 UTC) — re-run that lens if time allows
+      follow-ups, both fixed (F9, F10). The presentation/performance lens
+      ran after the usage limit reset and reported the acquire wait-target
+      issue, fixed as F11
 - [ ] 13. Hardware validation by the user (Snapdragon X Elite / Eden) of the
       items marked NEEDS-HW-TEST below
 
@@ -154,6 +154,18 @@ listed under "Whole-driver static analysis".
   it (pre-change order was truncate, then check). Found by the cross-review;
   the truncation now runs right after the IB-count check and before the
   per-IB validation, restoring the original semantics.
+- F11. `wsi_common_win32.cpp` buffer-blit acquire: when no image was free,
+  `wsi_win32_acquire_next_image` waited on the lowest-indexed busy image for
+  the whole timeout. The D3D12 copies retire in present order on one queue,
+  so when the lowest index was the most recently presented image the acquire
+  drained every frame in flight instead of only the oldest one, and with a
+  finite timeout it could return VK_TIMEOUT while an older image had already
+  become free. With 2 images this cost one extra frame; with the 3-4 images
+  F4 now allows it would have cancelled most of the benefit in GPU-bound
+  frames. Found by the presentation/performance cross-review lens. Each
+  image now records a chain-wide present sequence number when its copy is
+  queued, and the acquire waits on the busy image with the smallest one, the
+  one whose copy completes first.
 
 ### Reviewed, OK as-is
 
