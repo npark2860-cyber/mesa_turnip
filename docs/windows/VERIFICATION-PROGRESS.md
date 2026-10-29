@@ -69,7 +69,13 @@ listed under "Whole-driver static analysis".
       the 5 bitfield-constant-conversion warnings are a real MS-ABI bug in
       `shader_info.h` (F8); invalid-noreturn, missing-braces and the
       `#pragma message` are benign (see "Benign PC-build warnings")
-- [ ] 12. Hardware validation by the user (Snapdragon X Elite / Eden) of the
+- [x] 12. Independent cross-review of the PR diff (three reviewer agents with
+      distinct lenses, each finding then handed to two refuters). The WDDM
+      submit lens and the shared-code lens completed and reported two
+      follow-ups, both fixed (F9, F10); the presentation/performance lens and
+      the refuters did not run because the session hit its usage limit
+      (resets 18:00 UTC) — re-run that lens if time allows
+- [ ] 13. Hardware validation by the user (Snapdragon X Elite / Eden) of the
       items marked NEEDS-HW-TEST below
 
 ## Findings
@@ -134,6 +140,20 @@ listed under "Whole-driver static analysis".
   compile `x.f = C; return x.f == C;` to a constant 0 with the 2-bit field
   and to 1 with a 3-bit field; `x86_64-w64-mingw32` and `x86_64-linux-gnu`
   return 1 in both cases.
+- F9. `src/freedreno/drm/freedreno_priv.h` carried its own copies of
+  `U642VOID` / `VOID2U64`; after F7 they no longer matched the
+  `freedreno_common.h` definitions it includes, which would have produced
+  `macro redefined` warnings (an error under Mesa CI's `-Dwerror=true`) in
+  every `src/freedreno/drm` translation unit on Linux. Found by the
+  cross-review; the duplicates are removed. (`src/freedreno/drm` is not
+  built for Windows, which is why the Linux turnip-only build and the mingw
+  build did not show it.)
+- F10. `wddm_queue_submit`: F2 moved the per-IB size check ahead of the GPU
+  waits, but the `TU_WDDM_IB_LIMIT` diagnostic truncation stayed after them,
+  so an oversized single IB was rejected before the debug knob could shorten
+  it (pre-change order was truncate, then check). Found by the cross-review;
+  the truncation now runs right after the IB-count check and before the
+  per-IB validation, restoring the original semantics.
 
 ### Reviewed, OK as-is
 

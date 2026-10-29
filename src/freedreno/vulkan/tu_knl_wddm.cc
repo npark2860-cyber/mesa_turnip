@@ -856,6 +856,10 @@ wddm_queue_submit(struct tu_queue *queue, void *submission,
    const uint32_t size = 200 + count * 24;
    if (size > 65536)
       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY, "WDDM submit has too many IBs");
+   if (ib_limit && count == 1) {
+      (*entries)[0].size = MIN2((*entries)[0].size, ib_limit * 4);
+      mesa_logi("WDDM diagnostic IB prefix: %u dwords", (*entries)[0].size / 4);
+   }
    for (const auto &entry : *entries) {
       if (entry.size / 4 >= (1u << 20))
          return VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -884,10 +888,6 @@ wddm_queue_submit(struct tu_queue *queue, void *submission,
       }
    }
    if (count) {
-      if (ib_limit && count == 1) {
-         (*entries)[0].size = MIN2((*entries)[0].size, ib_limit * 4);
-         mesa_logi("WDDM diagnostic IB prefix: %u dwords", (*entries)[0].size / 4);
-      }
       std::vector<uint32_t> data(size / 4, 0);
       data[0] = 0xccaabbee;
       data[2] = size;
