@@ -329,9 +329,10 @@ Hardware test log (item 13):
   with every new DLL (the pipeline cache UUID follows the driver build);
   measure performance from the second launch on.
 - 2026-10-29 18:50 UTC, same setup after the cache rebuild: the user reports
-  Tears of the Kingdom holding 60 fps almost regardless of camera angle.
-  Subjective report; log numbers and the comparison against the previous
-  DLL are still to come. No hang or device loss so far.
+  Tears of the Kingdom holding 60 fps almost regardless of camera angle;
+  with the previous driver DLL, looking down always dropped it to about
+  40 fps. Subjective report, same device and SnapRYU build; log numbers
+  are still to come. No hang or device loss so far.
 
 Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
