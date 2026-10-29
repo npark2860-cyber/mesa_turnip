@@ -50,7 +50,7 @@ Policy-note: biblioklept
 - [x] 6. Apply bug fixes
 - [x] 7. Apply performance improvements
 - [x] 8. Re-run build + syntax checks after changes (all pass)
-- [ ] 9. Commit, push, open PR
+- [x] 9. Commit, push, open PR (https://github.com/npark2860-cyber/mesa_turnip/pull/1)
 - [ ] 10. Hardware validation by the user (Snapdragon X Elite / Eden) of the
       items marked NEEDS-HW-TEST below
 
