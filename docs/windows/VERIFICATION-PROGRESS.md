@@ -319,6 +319,16 @@ not re-counted from compiler output; the source carries the fixes. To
 re-count, remove `turnip-fable-pr1b-release-build\meson` and run the
 script once more.
 
+Hardware test log (item 13):
+
+- 2026-10-29 18:42 UTC, SnapRYU S3z8d + pr1b DLL, Tears of the Kingdom: a
+  stall of about half a minute shortly after launch, then the game resumed.
+  The Eden log shows "Total Pipeline Count: 0" followed by 853 shaders
+  compiled over 32 s and no error or device loss: the driver build changed,
+  so the Vulkan pipeline cache was rebuilt. Expected on the first launch
+  with every new DLL (the pipeline cache UUID follows the driver build);
+  measure performance from the second launch on.
+
 Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
 the 1-hour stability rule; watch for the NEEDS-HW-TEST items (F1 submit
