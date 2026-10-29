@@ -282,6 +282,46 @@ between `instr-a3xx.h` and the mingw-specific `gcc_struct` variant in
 `util/macros.h` (mingw only; the PC clang build defines both identically),
 1 unused variable in `nir_validate.c` (upstream).
 
+### Hardware-test builds (native clang 22, MSVC target, Windows ARM64 PC)
+
+Both builds use the user's usual Turnip recipe (clang `--target=aarch64-pc-windows-msvc`,
+`-fms-runtime-lib=dll`, `--buildtype=release -Db_ndebug=true`) with the
+SnapRYU patches 0001-0007 applied on top of this branch. Each build lives in
+its own new folder under `opus-spot\`; nothing existing was modified.
+
+- `turnip-fable-pr1-release\` — source 40f8ba7 + 0001-0007.
+  `vulkan_freedreno.dll` 13,324,288 bytes, SHA-256
+  F5A869E3AB3DFF74C8A6D629147EAE71A540F50CEB2A5EBC06CA9A8765BB3FA6.
+- `turnip-fable-pr1b-release\` — source 3dce589 + 0001-0007 (patch 0006
+  needed a manual 3-way merge in `wsi_win32_copy_to_dxgi`: the F11
+  `present_seq` line is kept ahead of the SnapRYU `if (verify)` block; the
+  applied patch is saved next to the source as
+  `applied-snapryu-0001-0007-on-3dce589.diff`, 3065 lines).
+  `vulkan_freedreno.dll` 13,325,824 bytes, SHA-256
+  4C99BC7774A0E42E519A7989D78BEF17C5387E318BDA8D1ED2A17CB4547D04A3.
+  Compile + link 68.5 s (710 ninja steps). `build-info.json` records the
+  source commit, the patch list and the hand merge.
+
+Checks run on the pr1b build: `meson-setup.log` shows `buildtype : release`
+and `b_ndebug : true`; all 579 commands in `compile_commands.json` carry
+`-DNDEBUG` and `-O3` (none `-O2`/`-g`, 561 also `-DMESA_DEBUG=0`) and all
+point at the pr1b source tree; the DLL contains no `_wassert` import, no
+"Assertion failed" string and no UTF-16 freedreno source paths (0 hits for
+`ir3_ra.c`, `tu_cs.h`, `ir3_spill.c`), same as the 40f8ba7 release DLL.
+Errors: 0 (DLL linked; a second, no-op run of the script completed with 0
+errors / 0 warnings). Gap: the full build's compiler log was overwritten by
+that second run, so the per-flag warning counts (the
+`bitfield-constant-conversion`, `pointer-to-int-cast` and `WAIT_TIMEOUT`
+macro-redefinition warnings are expected to be gone after F6/F7/F8) were
+not re-counted from compiler output; the source carries the fixes. To
+re-count, remove `turnip-fable-pr1b-release-build\meson` and run the
+script once more.
+
+Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
+in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
+the 1-hour stability rule; watch for the NEEDS-HW-TEST items (F1 submit
+batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
+
 ### OPEN (possible follow-ups, not changed)
 
 - O1. `wddm_bo_init` always reserves a VA range
