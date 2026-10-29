@@ -74,7 +74,8 @@ listed under "Whole-driver static analysis".
       submit lens and the shared-code lens completed and reported two
       follow-ups, both fixed (F9, F10). The presentation/performance lens
       ran after the usage limit reset and reported the acquire wait-target
-      issue, fixed as F11
+      policy; both refuters classed it as a pre-existing performance
+      property rather than a defect of this diff, and it is improved as F11
 - [ ] 13. Hardware validation by the user (Snapdragon X Elite / Eden) of the
       items marked NEEDS-HW-TEST below
 
@@ -154,18 +155,22 @@ listed under "Whole-driver static analysis".
   it (pre-change order was truncate, then check). Found by the cross-review;
   the truncation now runs right after the IB-count check and before the
   per-IB validation, restoring the original semantics.
-- F11. `wsi_common_win32.cpp` buffer-blit acquire: when no image was free,
-  `wsi_win32_acquire_next_image` waited on the lowest-indexed busy image for
-  the whole timeout. The D3D12 copies retire in present order on one queue,
-  so when the lowest index was the most recently presented image the acquire
-  drained every frame in flight instead of only the oldest one, and with a
-  finite timeout it could return VK_TIMEOUT while an older image had already
-  become free. With 2 images this cost one extra frame; with the 3-4 images
-  F4 now allows it would have cancelled most of the benefit in GPU-bound
-  frames. Found by the presentation/performance cross-review lens. Each
-  image now records a chain-wide present sequence number when its copy is
-  queued, and the acquire waits on the busy image with the smallest one, the
-  one whose copy completes first.
+- F11 (performance, pre-existing policy). `wsi_common_win32.cpp` buffer-blit
+  acquire: when no image was free, `wsi_win32_acquire_next_image` waited on
+  the lowest-indexed busy image for the whole timeout. The D3D12 copies
+  retire in present order on one queue, so when the lowest index was the
+  most recently presented image the acquire drained every frame in flight
+  instead of only the oldest one, and with a finite timeout it could return
+  VK_TIMEOUT while an older image had already become free. This existed with
+  2 images too. The cross-review's refuters confirmed it is not a defect of
+  F4: in their discrete-event simulation of the old policy (CPU frame 1.0,
+  GPU frame 1.2 / 1.6 / 2.5 / 4.0) GPU idle time was 22.6 / 17.9 / 12.3 /
+  8.0 % with 2 images, 11.1 / 14.1 / 9.5 / 6.2 % with 3 and 0.9 / 7.6 / 7.7
+  / 5.0 % with 4, so 3-4 images already beat the forced 2, while an
+  oldest-presented policy reaches 0 %. Each image now records a chain-wide
+  present sequence number when its copy is queued, and the acquire waits on
+  the busy image with the smallest one, the one whose copy completes first.
+  NEEDS-HW-TEST together with F4.
 
 ### Reviewed, OK as-is
 
