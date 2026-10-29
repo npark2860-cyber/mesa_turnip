@@ -211,7 +211,9 @@ wsi_win32_surface_get_capabilities(VkIcdSurfaceBase *surf,
        * be presented in the order they were acquired), so we can't
        * expose more than two image per swapchain.
        */
-      caps->surfaceCapabilities.minImageCount = caps->surfaceCapabilities.maxImageCount = 2;
+      caps->surfaceCapabilities.minImageCount = 2;
+      caps->surfaceCapabilities.maxImageCount =
+         wsi_device->win32.create_buffer_memory ? 4 : 2;
    } else {
       caps->surfaceCapabilities.minImageCount = 1;
       /* Software callbacke, there is no real maximum */

@@ -387,8 +387,9 @@ wddm_bo_init(struct tu_device *dev, struct vk_object_base *base,
    data[6] = MAX2(alignment, 4096);
    data[14] = 1;
    data[52] = 7;
-   if ((properties & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ||
-       debug_get_bool_option("TU_WDDM_CACHED", false))
+   static const bool force_cached = debug_get_bool_option("TU_WDDM_CACHED", false);
+   static const bool high_va = debug_get_bool_option("TU_WDDM_HIGH_VA", false);
+   if ((properties & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) || force_cached)
       data[15] = 1u << 7;
    data[57] = bo->size;
    data[58] = 1;
@@ -414,7 +415,7 @@ wddm_bo_init(struct tu_device *dev, struct vk_object_base *base,
       map.hAllocation = bo->gem_handle;
       map.SizeInPages = bo->size / 4096;
       map.BaseAddress = requested_va;
-      map.MinimumAddress = debug_get_bool_option("TU_WDDM_HIGH_VA", false) ? (1ULL << 32) : dev->physical_device->va_start;
+      map.MinimumAddress = high_va ? (1ULL << 32) : dev->physical_device->va_start;
       map.MaximumAddress = dev->physical_device->va_start + dev->physical_device->va_size - 1;
       map.Protection.Write = 1;
       uint64_t va_alignment = alignment;
@@ -846,32 +847,47 @@ wddm_queue_submit(struct tu_queue *queue, void *submission,
                    struct tu_u_trace_submission_data *)
 {
    auto dev = queue->device;
-   for (uint32_t i = 0; i < wait_count; i++) {
-      auto sync = (struct wddm_sync *)waits[i].sync;
-      UINT64 value = (sync->base.flags & VK_SYNC_IS_TIMELINE) ? waits[i].wait_value : sync->target;
+   auto entries = (wddm_submit *)submission;
+   static const bool capture_only = debug_get_bool_option("TU_WDDM_CAPTURE_ONLY", false);
+   static const uint32_t ib_limit = debug_get_num_option("TU_WDDM_IB_LIMIT", 0);
+   if (capture_only)
+      return vk_errorf(dev, VK_ERROR_INITIALIZATION_FAILED, "WDDM capture-only mode");
+   const uint32_t count = entries->size();
+   const uint32_t size = 200 + count * 24;
+   if (size > 65536)
+      return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY, "WDDM submit has too many IBs");
+   for (const auto &entry : *entries) {
+      if (entry.size / 4 >= (1u << 20))
+         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+   }
+   for (uint32_t base = 0; base < wait_count; base += D3DDDI_MAX_OBJECT_WAITED_ON) {
+      const uint32_t n = MIN2(wait_count - base, (uint32_t)D3DDDI_MAX_OBJECT_WAITED_ON);
+      D3DKMT_HANDLE handles[D3DDDI_MAX_OBJECT_WAITED_ON];
+      UINT64 values[D3DDDI_MAX_OBJECT_WAITED_ON];
+      for (uint32_t i = 0; i < n; i++) {
+         auto sync = (struct wddm_sync *)waits[base + i].sync;
+         handles[i] = sync->handle;
+         values[i] = (sync->base.flags & VK_SYNC_IS_TIMELINE) ?
+            waits[base + i].wait_value : sync->target;
+      }
       D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMGPU wait = {};
       wait.hContext = queue->msm_queue_id;
-      wait.ObjectCount = 1;
-      wait.ObjectHandleArray = &sync->handle;
-      wait.MonitoredFenceValueArray = &value;
+      wait.ObjectCount = n;
+      wait.ObjectHandleArray = handles;
+      wait.MonitoredFenceValueArray = values;
       if (D3DKMTWaitForSynchronizationObjectFromGpu(&wait) < 0)
          return vk_device_set_lost(&dev->vk, "WDDM GPU wait failed");
-      if (!(sync->base.flags & VK_SYNC_IS_TIMELINE))
-         sync->target++;
+      for (uint32_t i = 0; i < n; i++) {
+         auto sync = (struct wddm_sync *)waits[base + i].sync;
+         if (!(sync->base.flags & VK_SYNC_IS_TIMELINE))
+            sync->target++;
+      }
    }
-   auto entries = (wddm_submit *)submission;
-   if (debug_get_bool_option("TU_WDDM_CAPTURE_ONLY", false))
-      return vk_errorf(dev, VK_ERROR_INITIALIZATION_FAILED, "WDDM capture-only mode");
-   if (!entries->empty()) {
-      uint32_t count = entries->size();
-      uint32_t limit = debug_get_num_option("TU_WDDM_IB_LIMIT", 0);
-      if (limit && count == 1) {
-         (*entries)[0].size = MIN2((*entries)[0].size, limit * 4);
+   if (count) {
+      if (ib_limit && count == 1) {
+         (*entries)[0].size = MIN2((*entries)[0].size, ib_limit * 4);
          mesa_logi("WDDM diagnostic IB prefix: %u dwords", (*entries)[0].size / 4);
       }
-      uint32_t size = 200 + count * 24;
-      if (size > 65536)
-         return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY, "WDDM submit has too many IBs");
       std::vector<uint32_t> data(size / 4, 0);
       data[0] = 0xccaabbee;
       data[2] = size;
@@ -886,8 +902,6 @@ wddm_queue_submit(struct tu_queue *queue, void *submission,
       data[38] = count;
       for (uint32_t i = 0; i < count; i++) {
          const auto &entry = (*entries)[i];
-         if (entry.size / 4 >= (1u << 20))
-            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
          uint64_t address = entry.bo->iova + entry.offset;
          data[49 + 6 * i] = entry.size / 4;
          data[50 + 6 * i] = address;
@@ -909,23 +923,35 @@ wddm_queue_submit(struct tu_queue *queue, void *submission,
          return vk_device_set_lost(&dev->vk, "WDDM submit/fence failed: 0x%lx", status);
       }
    }
-   for (uint32_t i = 0; i <= signal_count; i++) {
-      auto sync = i < signal_count ? (struct wddm_sync *)signals[i].sync : queue->wddm_completion;
-      UINT64 value = i < signal_count ?
-         ((sync->base.flags & VK_SYNC_IS_TIMELINE) ? signals[i].signal_value : sync->target) :
-         ++queue->gfx_timepoint;
+   const uint64_t completion_value = ++queue->gfx_timepoint;
+   const uint32_t total_signals = signal_count + 1;
+   for (uint32_t base = 0; base < total_signals; base += D3DDDI_MAX_OBJECT_SIGNALED) {
+      const uint32_t n = MIN2(total_signals - base, (uint32_t)D3DDDI_MAX_OBJECT_SIGNALED);
+      D3DKMT_HANDLE handles[D3DDDI_MAX_OBJECT_SIGNALED];
+      UINT64 values[D3DDDI_MAX_OBJECT_SIGNALED];
+      for (uint32_t i = 0; i < n; i++) {
+         const uint32_t index = base + i;
+         if (index < signal_count) {
+            auto sync = (struct wddm_sync *)signals[index].sync;
+            handles[i] = sync->handle;
+            values[i] = (sync->base.flags & VK_SYNC_IS_TIMELINE) ?
+               signals[index].signal_value : sync->target;
+         } else {
+            handles[i] = queue->wddm_completion->handle;
+            values[i] = completion_value;
+         }
+      }
       D3DKMT_SIGNALSYNCHRONIZATIONOBJECTFROMGPU2 signal = {};
       signal.BroadcastContextCount = 1;
       signal.BroadcastContextArray = &queue->msm_queue_id;
       signal.Flags.AllowFenceRewind = 1;
-      signal.ObjectCount = 1;
-      signal.ObjectHandleArray = &sync->handle;
-      signal.MonitoredFenceValueArray = &value;
+      signal.ObjectCount = n;
+      signal.ObjectHandleArray = handles;
+      signal.MonitoredFenceValueArray = values;
       if (D3DKMTSignalSynchronizationObjectFromGpu2(&signal) < 0)
          return vk_device_set_lost(&dev->vk, "WDDM GPU signal failed");
-      if (i == signal_count)
-         p_atomic_set(&sync->target, value);
    }
+   p_atomic_set(&queue->wddm_completion->target, completion_value);
    queue->fence = (uint32_t)queue->gfx_timepoint;
    wddm_collect_retired(dev);
    return wddm_check_status(dev);
