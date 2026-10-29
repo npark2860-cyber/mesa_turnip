@@ -204,8 +204,6 @@ fd_rd_output_init(struct fd_rd_output *output, const char* output_name)
 void
 fd_rd_output_fini(struct fd_rd_output *output)
 {
-   free(output->name);
-
    if (output->file != NULL) {
       assert(output->combine);
       gzclose(output->file);
@@ -222,6 +220,8 @@ fd_rd_output_fini(struct fd_rd_output *output)
                fd_rd_dump_env.output_path, output->name);
       unlink(file_path);
    }
+
+   free(output->name);
 
    util_dynarray_fini(&output->frame_ranges);
    util_dynarray_fini(&output->submit_ranges);
