@@ -65,8 +65,10 @@ listed under "Whole-driver static analysis".
 - [x] 11. mingw-w64 cross build of the whole Windows driver (gcc 13, LLP64) to
       reproduce the warnings seen in the native PC build; found and fixed the
       two pointer-to-int casts (F7), identified the macro redefinition (F6)
-- [ ] 11b. Locate the remaining PC-build warnings from the clang build log
-      (bitfield-constant-conversion x5, invalid-noreturn x1) and decide
+- [x] 11b. Locate the remaining PC-build warnings from the clang build log:
+      the 5 bitfield-constant-conversion warnings are a real MS-ABI bug in
+      `shader_info.h` (F8); invalid-noreturn, missing-braces and the
+      `#pragma message` are benign (see "Benign PC-build warnings")
 - [ ] 12. Hardware validation by the user (Snapdragon X Elite / Eden) of the
       items marked NEEDS-HW-TEST below
 
@@ -111,6 +113,27 @@ listed under "Whole-driver static analysis".
   into the Windows driver; the truncated pointer only ever reaches the msm
   DRM ioctl (not compiled on Windows), so no crash today, but the cast is
   now `uintptr_t`, which is correct on every ABI.
+- F8. `src/compiler/shader_info.h`: `derivative_group:2`, `depth_layout:3`,
+  `stencil_front_layout:3`, `stencil_back_layout:3` (and `hash_type:2`) are
+  bit-fields of enum type. Under the Microsoft ABI (the native PC build:
+  clang targeting `aarch64-pc-windows-msvc`) an enum bit-field is signed, so
+  `DERIVATIVE_GROUP_LINEAR` (2) reads back as -2 and
+  `FRAG_DEPTH_LAYOUT_UNCHANGED` / `FRAG_STENCIL_LAYOUT_UNCHANGED` (4) read
+  back as -4; these are exactly the five `-Wbitfield-constant-conversion`
+  warnings of the PC build (`nir_lower_system_values.c:833`,
+  `spirv_to_nir.c:5972/6135/6269/6284`). Consequence on Windows:
+  `ir3_nir.c` never sees `DERIVATIVE_GROUP_LINEAR`, so compute shaders using
+  `DerivativeGroupLinearKHR` were not dispatched linearly (wrong derivative
+  results); `depth_layout` falls into the "unchanged is always OK" branch of
+  `tu_lrz.cc` by accident, so no visible effect there. Each field is now one
+  bit wider so the largest enumerator fits even when the field is signed.
+  Linux (GCC/Itanium ABI, unsigned enum bit-fields) is unaffected either
+  way. shader_info is only serialized into caches keyed by the driver build.
+  Verified with a 5-line test (`enum e {A,B,C}; struct { enum e f:2; }`):
+  clang 18 `--target=aarch64-pc-windows-msvc` and `x86_64-pc-windows-msvc`
+  compile `x.f = C; return x.f == C;` to a constant 0 with the 2-bit field
+  and to 1 with a 3-bit field; `x86_64-w64-mingw32` and `x86_64-linux-gnu`
+  return 1 in both cases.
 
 ### Reviewed, OK as-is
 
@@ -187,6 +210,18 @@ listed under "Whole-driver static analysis".
    size is the same, upstream has the same text); `tu_shader.cc`
    `tu_upload_shader` tests `v` for NULL once and then dereferences it
    unconditionally.
+
+### Benign PC-build warnings (native clang 22 build, not changed)
+
+- `-Winvalid-noreturn` at `src/c11/impl/threads_win32.c:347`: `thrd_exit` is
+  `_Noreturn` and ends in `_endthreadex`, which the UCRT headers do not mark
+  noreturn; `_endthreadex` never returns, so nothing happens.
+- `-Wmissing-braces` at `wsi_common_win32.cpp` (line 1245 of the patched PC
+  source): brace style of a nested aggregate initializer.
+- `-W#pragma-messages` "Deprecated reg builder" at `tu_cmd_buffer.cc:2265`:
+  an upstream reminder pragma.
+- 201 `-Wdeprecated-declarations`: POSIX names (`strdup`, `getenv`, ...)
+  under the MSVC CRT.
 
 ### mingw-w64 cross build (pass 2) — how it was run and what it found
 
