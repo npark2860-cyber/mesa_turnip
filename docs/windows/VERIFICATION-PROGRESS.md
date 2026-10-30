@@ -547,11 +547,52 @@ batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
   retired the helper fibers, so the shuffle reads stale values exactly on
   the lanes Eden's derivative emulation reads at every primitive edge,
   which is where the screenshot shows the grid. Remaining check: one
-  Bayonetta 3 cutscene with the pr3 ICD, result pending when this entry
-  was written.
+  Bayonetta 3 cutscene with the pr3 ICD: see the next entry.
+
+- 2026-10-30 07:30 UTC, Bayonetta 3 cutscene with the pr3 ICD: the skin grid
+  is unchanged. The run did use pr3: both SnapRYU 1.1 artifact folders hold
+  the 45336175 DLL, the Eden log shows a new output-policy digest
+  (d8a5690033ff772b, hashed from the driver's pipeline-cache and driver
+  UUIDs), a cold shader cache (686 graphics + 16 compute pipelines built),
+  and device caps identical to the pr2 run. So F13 is a real a7xx defect
+  that the probe shows, but not the cause of the grid; it stays in the
+  branch. Checked and rejected next: a 128-lane subgroup problem in Eden's
+  Maxwell warp emulation (Turnip reports subgroupSize 128, Qualcomm 64).
+  SnapRYU's `emit_spirv_warp.cpp` masks the lane id with 31 and adds the
+  partition base (`id >> 5 << 5`) to every shuffle source, and extracts
+  ballot word `id >> 5`, so 4 partitions are handled; Turnip's
+  `tu_restrict_subgroup_size_64` driconf switch is therefore not needed.
+  What Eden does only on Turnip, from its driver-id branches: descriptor
+  buffers (`VK_EXT_descriptor_buffer`, GPU_CAPS3 descriptor_buffer=true,
+  false on Qualcomm), no VS-to-FS varying packing (Qualcomm packs by
+  default), shaderInt64 and workgroup-memory-explicit-layout kept,
+  descriptor aliasing allowed (`has_broken_descriptor_aliasing` is Qualcomm
+  only), scaled vertex formats consumed natively
+  (`must_emulate_scaled_formats` is Qualcomm only), subgroup operations in
+  vertex stages (supportedStages 0x3f vs 0x30). EDS3 is off on both. Next
+  step, one run: the SnapRYU diag build with `EDEN_GPU_CONSERVATIVE=1`
+  (drops descriptor buffers, push descriptors, EDS1-3, vertex input dynamic
+  state) and `EDEN_VARYING_PACK=1`, with the SPIR-V shader dump enabled so
+  the skin shaders can be analysed offline whatever the outcome.
 
 ### OPEN (possible follow-ups, not changed)
 
+- O0. driconf on Windows: `meson.build` compiles `xmlconfig.c` with
+  `-DNO_REGEX` when no regex library is found (none is, for the MSVC
+  target), and the stub `regexec` always returns `REG_NOMATCH`. The
+  compiled-in defaults (`00-mesa-defaults.conf`, `00-turnip-defaults.conf`)
+  are still applied through `parseStaticConfig`, but every
+  `engine_name_match`, `application_name_match` and `executable_regexp`
+  entry is inert on Windows, including the DXVK/vkd3d engine entries
+  (`tu_use_tex_coord_round_nearest_even_mode`,
+  `tu_enable_fast_border_color_for_undefined_formats`,
+  `tu_emulate_alpha_to_coverage`) and the No Man's Sky
+  `tu_restrict_subgroup_size_64` entry. Only exact `executable` matches
+  work, compared case-sensitively against the exe name from
+  `GetModuleFileNameA` (`SnapRYU.exe`). Any Windows-specific workaround
+  entry therefore needs `executable="Name.exe"`, and a case-insensitive
+  compare under `DETECT_OS_WINDOWS` would make that robust. Not changed
+  because no entry is needed yet.
 - O1. `wddm_bo_init` always reserves a VA range
   (`D3DKMTReserveGpuVirtualAddress`) before mapping because `alignment` is
   clamped to >= 64 KiB, so every allocation costs two VA kernel calls. If
