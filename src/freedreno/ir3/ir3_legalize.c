@@ -1671,6 +1671,8 @@ instr_mark_helpers(struct ir3_compiler *compiler,
    case OPC_QUAD_SHUFFLE_DIAG:
    case OPC_BALL:
    case OPC_BANY:
+   case OPC_SHFL:
+   case OPC_MOVS:
       /* Subgroup operations don't require helper invocations to be present, but
        * will use helper invocations if they are present.
        */
