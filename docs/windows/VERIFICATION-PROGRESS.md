@@ -373,6 +373,28 @@ Hardware test log (item 13):
   also only fair if the Qualcomm KMD/driver package version was the same
   for the "before" measurement.
 
+- 2026-10-30 03:18 UTC, Bayonetta 3 1.2.0 cutscenes on SnapRYU 1.1 (S3z8 +
+  the pr1b dll-runtime DLL, SHA 4C99BC77): character skin renders as a
+  flat saturated violet wash with its texture and shading gone, with fine
+  1-2 px bright speckles/streaks that follow the surface curvature in lit
+  areas; cloth (cap) turns magenta but keeps its fabric texture; hair,
+  metal, background and UI are correct. The Qualcomm driver renders the
+  same cut clean. Across 6 consecutive captured frames the pattern is
+  surface-locked and identical, so it does not look like a submit/acquire
+  race (F1/F2/F4/F11), and the shader_info fix (F8) is excluded because
+  Eden's shader recompiler emits none of the execution modes those fields
+  carry (no DerivativeGroup, DepthUnchanged/Greater/Less or
+  StencilRef*Layout anywhere in its tree; DepthReplacing maps to a value
+  the old field already held). Open lead: Turnip reports
+  VK_EXT_4444_formats / formatA4B4G4R4 unsupported while Qualcomm supports
+  it, so A4B4G4R4 textures take Eden's fallback path only on Turnip. Log:
+  Mesa 26.3.0-devel git-3dce589585, Adreno X1-85, cold pipeline cache, no
+  errors, LSFG frame generation on. Pending: one A/B run of the same cut
+  with the b110 public Turnip DLL (SHA 574F71ED, a different Mesa base,
+  regspill-v3-r1 + overrides); if that is clean, a build of the PR base
+  16f87fb + the same SnapRYU 0001-0007 patches will separate the PR from
+  the base change.
+
 Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
 the 1-hour stability rule; watch for the NEEDS-HW-TEST items (F1 submit
