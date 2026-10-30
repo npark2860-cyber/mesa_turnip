@@ -1191,6 +1191,9 @@ wddm_add_adapter(struct tu_instance *instance, D3DKMT_ADAPTERINFO *adapter)
    extensions.EXT_sample_locations = available_extensions.EXT_sample_locations;
    extensions.EXT_shader_stencil_export = available_extensions.EXT_shader_stencil_export;
    extensions.EXT_shader_viewport_index_layer = available_extensions.EXT_shader_viewport_index_layer;
+   extensions.EXT_4444_formats = available_extensions.EXT_4444_formats;
+   extensions.KHR_robustness2 = available_extensions.KHR_robustness2;
+   extensions.EXT_robustness2 = available_extensions.EXT_robustness2;
    device->vk.supported_features = {};
    auto &features = device->vk.supported_features;
    features.presentId = true;
@@ -1399,6 +1402,11 @@ wddm_add_adapter(struct tu_instance *instance, D3DKMT_ADAPTERINFO *adapter)
    features.rasterizationOrderColorAttachmentAccess = available_features.rasterizationOrderColorAttachmentAccess;
    features.rasterizationOrderDepthAttachmentAccess = available_features.rasterizationOrderDepthAttachmentAccess;
    features.rasterizationOrderStencilAttachmentAccess = available_features.rasterizationOrderStencilAttachmentAccess;
+   features.formatA4R4G4B4 = available_features.formatA4R4G4B4;
+   features.formatA4B4G4R4 = available_features.formatA4B4G4R4;
+   features.robustBufferAccess2 = available_features.robustBufferAccess2;
+   features.robustImageAccess2 = available_features.robustImageAccess2;
+   features.nullDescriptor = available_features.nullDescriptor;
    device->vk.properties.apiVersion = VK_MAKE_VERSION(1, 3, 0);
    device->vk.properties.maxMemoryAllocationSize = UINT32_MAX - 65535;
    device->vk.properties.maxBufferSize = UINT32_MAX - 65535;
