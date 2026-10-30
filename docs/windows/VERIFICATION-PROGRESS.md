@@ -172,6 +172,30 @@ listed under "Whole-driver static analysis".
   the busy image with the smallest one, the one whose copy completes first.
   NEEDS-HW-TEST together with F4.
 
+- F12. `tu_knl_wddm.cc` `wddm_add_adapter` replaces the generic Turnip
+  extension and feature tables with a fixed whitelist (109 extensions, 206
+  features) that dates from the original port and was never updated: 113
+  extensions and 99 features that the driver supports on Linux are hidden
+  on Windows. Most are irrelevant there (DRM/X11/Android/fd externals,
+  sparse, ray tracing), but several are pure driver-side features that
+  Eden probes and falls back on when missing: `VK_EXT_4444_formats`
+  (Eden then substitutes `R4G4B4A4` for `A4B4G4R4` with a view swizzle
+  that is only applied to sampled, non-render-target views) and
+  `VK_KHR/EXT_robustness2` with `nullDescriptor` (Eden then binds a real
+  1x1 image with undefined contents for every unbound texture slot
+  instead of a null descriptor that reads zeros). Both are candidate
+  causes of the Bayonetta 3 skin artifact (see the hardware test log);
+  the Qualcomm driver exposes both. Commit c447ace passes the two
+  extensions and their five feature bits through from the generic
+  tables, nothing else. Still hidden and listed as O6: conservative
+  rasterization, `KHR_shader_atomic_int64` / `EXT_shader_atomic_float`
+  (Eden reports atomic64=false and emulates), `KHR_maintenance5`..`9`,
+  `EXT_texel_buffer_alignment`, `EXT_host_image_copy`,
+  `KHR_shader_float_controls2`, `EXT_legacy_vertex_attributes`,
+  `EXT_primitive_restart_index` and others. NEEDS-HW-TEST (Bayonetta 3
+  cutscene, and a general regression pass since nullDescriptor changes
+  how Eden binds empty slots in every game).
+
 ### Reviewed, OK as-is
 
 - Timestamp readback in `wddm_timestamp_sample` is 64-bit: the
@@ -416,3 +440,15 @@ batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
 - O4. `tu_GetCalibratedTimestampsKHR` with the device domain allocates a BO,
   context and sync object per call. Fine unless an app calls it per frame.
 - O5. `wsi_win32_wait_for_present` polls with `Sleep(1)`.
+
+- O6. The WDDM whitelist (F12) still hides 111 extensions / 94 features
+  that the generic tables advertise. Candidates worth passing through
+  after hardware testing, roughly by value for Eden: KHR_shader_atomic_int64
+  and EXT_shader_atomic_float (Eden emulates 64-bit atomics without them),
+  EXT_conservative_rasterization (a7xx), KHR_maintenance5-9,
+  EXT_texel_buffer_alignment, KHR_shader_float_controls2,
+  EXT_shader_module_identifier, EXT_legacy_vertex_attributes,
+  EXT_primitive_restart_index, EXT_host_image_copy, KHR_fragment_shading_rate.
+  Each needs a check that it has no kernel-side dependency the WDDM
+  backend lacks; the whitelist should probably become a blocklist of the
+  known-unsupported ones instead.
