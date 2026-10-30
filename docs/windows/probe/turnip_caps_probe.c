@@ -262,7 +262,7 @@ main(int argc, char **argv)
       fprintf(stderr, "usage: %s <icd dll>\n", argv[0]);
       return 2;
    }
-   HMODULE lib = LoadLibraryA(argv[1]);
+   HMODULE lib = LoadLibraryExA(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
    if (!lib) {
       fprintf(stderr, "LoadLibrary(%s) failed: %lu\n", argv[1],
               (unsigned long)GetLastError());
