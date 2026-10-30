@@ -211,9 +211,12 @@ listed under "Whole-driver static analysis".
   per-triangle-edge grid seen on skin in Bayonetta 3 cutscenes (Adreno
   X1-85). a6xx has no `shfl` (NIR lowers shuffles through movmsk/brcst,
   which are tracked), so this is a7xx-only. Fixed in 78a84a6 by adding
-  `OPC_SHFL` and `OPC_MOVS` to the list; the Linux build compiles. Not yet
-  confirmed on hardware; the upstream main copy of the file could not be
-  fetched to check whether it already has the change.
+  `OPC_SHFL` and `OPC_MOVS` to the list; the Linux build compiles. Confirmed
+  on the Adreno X1-85 with the probe below (2026-10-30 06:53 UTC entry in
+  the hardware test log: without the fix every shuffle from a helper lane
+  is wrong, with it all are right); the Bayonetta 3 check itself is logged
+  there. The upstream main copy of the file could not be fetched to check
+  whether it already has the change.
   Probe for this without a game: `docs/windows/probe/turnip_lane_probe.c`
   (+ `probe_spv.h` generated from `probe.vert` / `probe.frag` with
   `glslangValidator --target-env vulkan1.1 -V`). It loads
@@ -395,6 +398,31 @@ its own new folder under `opus-spot\`; nothing existing was modified.
   Eden log of that run (`GPU_CAPS2 robust2=true null_descriptor=true`, no
   "Device doesn't support extension VK_EXT_4444_formats / robustness2").
 
+- `turnip-fable-pr3-release\` — source 2f2d81c (78a84a6, F13: ir3 keeps helper
+  invocations alive across `shfl`/`movs`, plus the probe and doc commits)
+  + 0001-0007 (applied cleanly, same 3065-line diff as on pr1b/pr2), dll
+  runtime like pr2 so that the two DLLs differ only by F13 and the
+  unrelated doc commits. `vulkan_freedreno.dll` 13,325,824 bytes, SHA-256
+  4533617582296B43C3B4C96631654AE3A4D175EE3306DF97FC578660F029B228,
+  version string "Mesa 26.3.0-devel (git-2f2d81c8bb)", meson setup 35 s,
+  compile + link 78 s (691 ninja steps), 0 errors, the same 204 benign
+  compiler warnings as pr2 plus 2 lld-link warnings, all 579 compile
+  commands `-DNDEBUG -O3 -fms-runtime-lib=dll`, no assert text, PE machine
+  ARM64. Built, packaged and probed by one
+  user-run script (`run-pr3-and-probe.cmd`: VsDevCmd, clang for the lane
+  probe, the pr3 meson build, packaging, then the probe against the pr2 and
+  the pr3 DLL, each step logged to its own file). The first three attempts
+  (15:30-15:38 KST) ran nothing: `VsDevCmd.bat` starts its telemetry sender
+  as a background PowerShell whose only redirect is stdout to NUL, so it
+  inherited the script's log handle and every later step failed to reopen
+  the log; `VSCMD_SKIP_SENDTELEMETRY=1` plus one writer per log file fixed
+  it. The packaging step then failed only while parsing the pr2
+  `build-info.json` (Windows PowerShell 5.1 reads a BOM-less UTF-8 file as
+  CP949, so the Korean folder name in a path became an invalid JSON
+  escape); DLL, ICD and `SHA256SUMS.txt` were already written, and
+  `build-info.json` was added afterwards with the script reading the file
+  as UTF-8 explicitly.
+
 Checks run on the pr1b build: `meson-setup.log` shows `buildtype : release`
 and `b_ndebug : true`; all 579 commands in `compile_commands.json` carry
 `-DNDEBUG` and `-O3` (none `-O2`/`-g`, 561 also `-DMESA_DEBUG=0`) and all
@@ -503,6 +531,24 @@ batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
   has_broken_fp32_denorm_flush). Static review of the derivative path led
   to F13; next step is a pr3 build from 78a84a6 + 0001-0007 and one
   Bayonetta 3 cutscene run.
+
+- 2026-10-30 06:53 UTC, lane probe (`docs/windows/probe/turnip_lane_probe.c`,
+  compiled on the PC with clang 22.1.3 for aarch64-pc-windows-msvc, no
+  loader, no game) against the pr2 DLL (A6B8D572, without 78a84a6) and the
+  pr3 DLL (45336175, with it), 16x16 target, one triangle covering
+  the lower-left half. Both DLLs: the lane layout matches the Vulkan quad
+  order (lane(x+1,y) = lane^1, lane(x,y+1) = lane^2, one quad base per
+  2x2 block), so Eden's FSWZADD emulation addresses the right neighbours,
+  and all 112 shuffles whose source lane is a covered pixel return the
+  right value. Shuffles whose source lane is a helper (the quads cut by
+  the triangle edge): pr2 0 of 8 right, for xor 1 and xor 2 alike, pr3 8 of
+  8 right. Exit codes 3 (pr2) and 0 (pr3). That is the F13 mechanism
+  observed on the hardware: the `(eq)` placed before `shfl.xor` had already
+  retired the helper fibers, so the shuffle reads stale values exactly on
+  the lanes Eden's derivative emulation reads at every primitive edge,
+  which is where the screenshot shows the grid. Remaining check: one
+  Bayonetta 3 cutscene with the pr3 ICD, result pending when this entry
+  was written.
 
 ### OPEN (possible follow-ups, not changed)
 
