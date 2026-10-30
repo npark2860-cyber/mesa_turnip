@@ -214,6 +214,23 @@ listed under "Whole-driver static analysis".
   `OPC_SHFL` and `OPC_MOVS` to the list; the Linux build compiles. Not yet
   confirmed on hardware; the upstream main copy of the file could not be
   fetched to check whether it already has the change.
+  Probe for this without a game: `docs/windows/probe/turnip_lane_probe.c`
+  (+ `probe_spv.h` generated from `probe.vert` / `probe.frag` with
+  `glslangValidator --target-env vulkan1.1 -V`). It loads
+  `vulkan_freedreno.dll` directly through `vk_icdGetInstanceProcAddr` (no
+  loader), draws one triangle into a 16x16 `R32G32B32A32_UINT` image with a
+  fragment shader that samples a 1x1 texture (so ir3 inserts the helper
+  kill) and then does `subgroupShuffleXor(v, 1)` and `(v, 2)`, reads the
+  image back and prints the lane map, whether horizontally/vertically
+  adjacent covered pixels have lane ids differing in bit 0 / bit 1 (the
+  quad order Vulkan defines), and whether each shuffled value matches the
+  neighbour lane's value, split by neighbour covered / neighbour helper.
+  Expected: on a 78a84a6-less DLL the "neighbour helper" shuffles return
+  stale data; on 78a84a6 all four counters are clean. Compiles as a Windows
+  PE with mingw clang here (`clang --target=x86_64-w64-mingw32 -I include
+  docs/windows/probe/turnip_lane_probe.c`); on the PC it is built with the
+  same clang 22 for `aarch64-pc-windows-msvc`. Exit code 0 = all checks
+  pass, 3 = some check failed.
 
 ### Reviewed, OK as-is
 
