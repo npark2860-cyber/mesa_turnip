@@ -623,6 +623,33 @@ batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
   source's condition and a runtime switch; the next single run is a
   SnapRYU variant with the nudge off for `VK_DRIVER_ID_MESA_TURNIP`.
 
+- 2026-10-30 09:30 UTC, correction: the gather nudge is not Turnip-only.
+  The SnapRYU build source (`vk_pipeline_cache.cpp:551-557`) enables
+  `need_gather_subpixel_offset` for Qualcomm proprietary and Turnip alike
+  (measured on the X1-85 for the TotK lighting tiles), so the clean
+  Qualcomm run had it too. Lead withdrawn. Eden's depth-compare path for
+  R32F shadow maps (`DepthCompareTwin`: a D32_SFLOAT twin image filled by
+  buffer-to-image copy and sampled with compare) was tested next.
+- 2026-10-30 09:38 UTC, diag-run-3 (`EDEN_NO_DEPTH_COMPARE_TWIN=1`, release
+  exe, pr3 ICD): grid unchanged. The user then asked to stop the Bayonetta
+  3 grid investigation; it is paused here. Ruled out so far: F13 helper
+  lanes, 128-lane subgroups, descriptor buffers / push descriptors / EDS /
+  vertex input dynamic state, varying packing, GMEM, UBWC, LRZ, the gather
+  nudge, the depth-compare twin. Not yet run: `EDEN_DROP_DEPTH_COMPARE=1`,
+  `EDEN_GPU_NO_FP16=1` (38 fp16 fragment shaders), `EDEN_GPU_NO_SUBGROUP=1`
+  (43 shuffle shaders), `EDEN_NO_NATIVE_ASTC=1`, and the no-game gather
+  probe below. A capture of one frame with a frame debugger would be the
+  next step if the work resumes.
+- `docs/windows/probe/turnip_gather_probe.c` (with `gather.vert`,
+  `gather.frag`, `gather_spv.h`): loader-free probe that uploads a 16x16x2
+  D32_SFLOAT array by `vkCmdCopyBufferToImage` and gathers it with and
+  without depth compare at texel-centre offsets of 0, +-1/512, +-0.001,
+  +-0.002, +-0.004, printing the footprint each driver picks and whether
+  the compare gather agrees with the plain gather. Validated on lavapipe
+  built from this tree (81 of 81 footprints as the offset implies, compare
+  consistent, exit 0); builds for Windows with mingw-w64 and, like the caps
+  probe, with clang for `aarch64-pc-windows-msvc`. Not yet run on the PC.
+
 ### OPEN (possible follow-ups, not changed)
 
 - O0. driconf on Windows: `meson.build` compiles `xmlconfig.c` with
