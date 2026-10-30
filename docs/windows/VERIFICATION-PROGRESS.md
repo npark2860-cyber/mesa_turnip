@@ -431,6 +431,19 @@ Hardware test log (item 13):
   regspill-v3-r1 + overrides); if that is clean, a build of the PR base
   16f87fb + the same SnapRYU 0001-0007 patches will separate the PR from
   the base change.
+- 2026-10-30 05:30 UTC, same cut with the c447ace build (F12: 4444
+  formats and robustness2 exposed): the Eden log confirms the change took
+  effect (`GPU_CAPS2 robust2=true null_descriptor=true`, no 4444 line,
+  policy hash changed), the skin artifact is unchanged. So neither the
+  A4B4G4R4 fallback nor the null-image fallback causes it; F12 stays as a
+  parity fix. Still unsupported per the log: conservative rasterization,
+  depth_bias_control, depth_range_unrestricted, external_memory_host.
+  Next hypothesis: the SnapRYU register-spill patch (ir3_ra.c, ir3_spill.c,
+  ir3_shader.c), since a deterministic miscompile of a high-pressure skin
+  shader fits a material-specific, surface-locked pattern and b110 carries
+  the same patch. A vanilla build (c447ace without the SnapRYU patches) is
+  prepared on the PC as the decisive A/B; run only if the release owner
+  wants to spend a test on it.
 
 Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json`
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
