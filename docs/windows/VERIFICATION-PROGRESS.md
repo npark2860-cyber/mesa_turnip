@@ -575,6 +575,54 @@ batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
   state) and `EDEN_VARYING_PACK=1`, with the SPIR-V shader dump enabled so
   the skin shaders can be analysed offline whatever the outcome.
 
+- 2026-10-30 08:25 UTC, diag-run-1 (SnapRYU release, `EDEN_GPU_CONSERVATIVE=1`,
+  `EDEN_VARYING_PACK=1`, SPIR-V dump on, pr3 ICD): grid unchanged. The log
+  proves the switches took effect (conservative-mode warning, 1214
+  "Packed N varyings" lines, new policy digest c0ba35dadedf1bfa), so
+  descriptor buffers, push descriptors, EDS1-3, vertex input dynamic state
+  and varying packing are all ruled out. 245 SPIR-V modules were dumped
+  (150 fragment, 79 vertex, 16 compute; archive and screenshot kept on the
+  PC under `opus-spot\diag-run-1\`).
+- 2026-10-30 09:05 UTC, diag-run-2 (`TU_DEBUG=sysmem,noubwc,nolrz`, pr3 ICD,
+  new policy digest 48bcccc88dc142d1): grid unchanged, so GMEM rendering,
+  UBWC and LRZ are ruled out too. The same launcher ran
+  `docs/windows/probe/turnip_caps_probe.c` against the pr3 ICD and the
+  Qualcomm ICD (`qcvkarm64xum.dll` 31.0.178.0); dumps in
+  `opus-spot\diag-run-2\caps-*.txt`.
+- 2026-10-30 09:40 UTC, caps diff (Turnip pr3 vs Qualcomm): the only broad
+  format difference is `SAMPLED_IMAGE_FILTER_CUBIC` (Qualcomm on 69
+  formats, Turnip none; Eden does not use cubic filtering). Filter-minmax,
+  all float-controls properties (FTZ32 on both), shaderFloat16, D24S8 and
+  D32S8 support, depth-comparison bits are identical. Differences that are
+  not sampling-related: subgroupSize 128/64, quadDivergentImplicitLod 0/1,
+  shaderResourceMinLod 1/0, ASTC HDR 0/1, inline-uniform-block limits,
+  1 memory heap and 2 types vs 2 heaps and 9 types, 1 queue family vs 3.
+  None of these explains a per-texel grid on skin.
+- 2026-10-30 10:00 UTC, SPIR-V analysis of the 245 dumped modules
+  (`spirv-dis`): every module requests `DenormFlushToZero 32` and
+  `SignedZeroInfNanPreserve 32`; 38 fragment shaders use Float16 (packed
+  half unpack, `fadd(x, -0)` and `f16->f32` conversions, i.e. Maxwell
+  HADD2.F32 patterns); 43 use `OpGroupNonUniformShuffle` on 32-bit values
+  with Eden's partition-aware index (`(id ^ n) + (id >> 5 << 5)`); 39 use
+  demote, 48 use kill; 4 compute shaders use Int64 only for `shr`/bitcast
+  address math; 3 compute shaders use workgroup-memory-explicit-layout.
+  The screenshots show the lattice only in shadowed areas (under the cap
+  brim, the neck, the jacket folds; the lit cheek and nose are clean), so
+  it is a shadow-map PCF artifact. The two shadow shaders gather a 2D-array
+  depth texture (`OpImageDrefGather`, 4 taps each) and the 11.5k-line main
+  material shader gathers 2D textures 17 times; in all 10 gather shaders
+  Eden adds `OpImageQuerySizeLod` + `(1/512)/size` to the gather
+  coordinates (constant 0x1p-9 = 0.001953125, `ImageGatherSubpixelOffset`
+  in `emit_spirv_image.cpp`). In the Eden_NCE tree
+  (`vk_pipeline_cache.cpp:872`) `need_gather_subpixel_offset` is set only
+  for AMD, RADV and Intel driver ids, so the SnapRYU build must enable it
+  for Turnip while the Qualcomm driver id gets no nudge. That is the
+  strongest Turnip-only differential found: a Maxwell-rounding nudge on
+  Adreno gathers with shader-side PCF weights would show exactly as a
+  texel-grid lattice in shadows. Asked the Eden thread for the build
+  source's condition and a runtime switch; the next single run is a
+  SnapRYU variant with the nudge off for `VK_DRIVER_ID_MESA_TURNIP`.
+
 ### OPEN (possible follow-ups, not changed)
 
 - O0. driconf on Windows: `meson.build` compiles `xmlconfig.c` with
