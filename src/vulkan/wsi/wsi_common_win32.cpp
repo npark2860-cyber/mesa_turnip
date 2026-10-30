@@ -78,6 +78,7 @@ struct wsi_win32_image {
       ID3D12GraphicsCommandList *list;
       ID3D12Fence *complete;
       uint64_t serial;
+      uint64_t present_seq;
       HANDLE event;
    } dxgi;
    struct {
@@ -129,6 +130,7 @@ struct wsi_win32_swapchain {
    struct wsi_win32_present *present_head;
    struct wsi_win32_present *present_tail;
    uint64_t completed_id;
+   uint64_t present_seq;
    struct wsi_image_timing_request timing_request;
    struct wsi_win32_image     images[0];
 };
@@ -211,7 +213,9 @@ wsi_win32_surface_get_capabilities(VkIcdSurfaceBase *surf,
        * be presented in the order they were acquired), so we can't
        * expose more than two image per swapchain.
        */
-      caps->surfaceCapabilities.minImageCount = caps->surfaceCapabilities.maxImageCount = 2;
+      caps->surfaceCapabilities.minImageCount = 2;
+      caps->surfaceCapabilities.maxImageCount =
+         wsi_device->win32.create_buffer_memory ? 4 : 2;
    } else {
       caps->surfaceCapabilities.minImageCount = 1;
       /* Software callbacke, there is no real maximum */
@@ -909,7 +913,9 @@ wsi_win32_acquire_next_image(struct wsi_swapchain *drv_chain,
          }
          if (result < 0)
             return result;
-         if (selected == UINT32_MAX)
+         if (selected == UINT32_MAX ||
+             chain->images[i].dxgi.present_seq <
+                chain->images[selected].dxgi.present_seq)
             selected = i;
       }
       if (selected == UINT32_MAX)
@@ -1092,6 +1098,7 @@ wsi_win32_copy_to_dxgi(struct wsi_win32_swapchain *chain,
    if (FAILED(queue->Signal(image->dxgi.complete, serial)))
       return VK_ERROR_DEVICE_LOST;
    image->dxgi.serial = serial;
+   image->dxgi.present_seq = ++chain->present_seq;
    return VK_SUCCESS;
 }
 

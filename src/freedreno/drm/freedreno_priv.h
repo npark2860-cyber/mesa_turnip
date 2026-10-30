@@ -496,9 +496,6 @@ bool fd_dbg(void);
       mesa_loge("%s:%d: " fmt, __func__, __LINE__, ##__VA_ARGS__);             \
    } while (0)
 
-#define U642VOID(x) ((void *)(unsigned long)(x))
-#define VOID2U64(x) ((uint64_t)(unsigned long)(x))
-
 #ifdef HAVE_VALGRIND
 #include <memcheck.h>
 
