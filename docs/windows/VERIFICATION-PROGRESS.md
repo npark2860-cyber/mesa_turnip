@@ -346,6 +346,19 @@ its own new folder under `opus-spot\`; nothing existing was modified.
   `SNAPRYU_REGSPILL_DIAGNOSTIC` is at its header default 0 in both pr1b
   builds. Not yet run in a game itself.
 
+- `turnip-fable-pr2-release\` — source c447ace (F12: 4444 formats and
+  robustness2 passed through the WDDM whitelist) + 0001-0007 (applied
+  cleanly, no hunk touched the new lines), dll runtime so that it is the
+  direct A/B partner of the 3dce589 DLL in the SnapRYU 1.1 artifact.
+  `vulkan_freedreno.dll` 13,324,800 bytes, SHA-256
+  A6B8D57205D7BB9ED6A4C59DE26DCCB546EF4C4C2A1E4E654119C6E50836D165,
+  version string "Mesa 26.3.0-devel (git-c447acec2b)", compile + link
+  83.9 s, 0 errors, same 204 benign warnings, all 579 compile commands
+  `-DNDEBUG -O3`, no assert text, PE machine ARM64. Built for the
+  Bayonetta 3 check; whether the pass-through took effect shows in the
+  Eden log of that run (`GPU_CAPS2 robust2=true null_descriptor=true`, no
+  "Device doesn't support extension VK_EXT_4444_formats / robustness2").
+
 Checks run on the pr1b build: `meson-setup.log` shows `buildtype : release`
 and `b_ndebug : true`; all 579 commands in `compile_commands.json` carry
 `-DNDEBUG` and `-O3` (none `-O2`/`-g`, 561 also `-DMESA_DEBUG=0`) and all
