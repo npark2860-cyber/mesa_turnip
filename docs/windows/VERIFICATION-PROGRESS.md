@@ -304,6 +304,24 @@ its own new folder under `opus-spot\`; nothing existing was modified.
   2026-10-29: the user bundled this DLL into the SnapRYU z8 and z8d builds
   as the driver under hardware test.
 
+- `dist-static-20261030\turnip-pr1b-static\` — same source as pr1b (3dce589 +
+  0001-0007, tree unchanged), built for the public SnapRYU release with a
+  static CRT so the package needs no VC++ redistributable: the pr1b script
+  plus `-Db_vscrt=mt` (clang gets `-fms-runtime-lib=static`) and
+  `-Dc_link_args=-Dcpp_link_args=-Wl,/nodefaultlib:msvcrt`, which is what
+  the b110 public build did. `vulkan_freedreno.dll` 13,581,312 bytes,
+  SHA-256 CB5658821A118681A85F3C95938322649DBFD5ED63674FC64339A066AA1BD378,
+  compile + link 78.2 s. Import table: KERNEL32, USER32, GDI32,
+  api-ms-win-core-synch-l1-2-0 only, identical to the b110 static DLL; the
+  dll-runtime pr1b DLL additionally imported MSVCP140, VCRUNTIME140 and 10
+  api-ms-win-crt-* DLLs. All 579 compile commands carry `-DNDEBUG -O3
+  -fms-runtime-lib=static`; link rule has `/nodefaultlib:msvcrt` and no
+  `/nodefaultlib:libcmt`; PE machine ARM64; no `_wassert`, no assert text,
+  no UTF-16 source paths; 0 errors, 204 compiler warnings (201
+  deprecation, the known benign ones, and 0 of the three fixed flags).
+  `SNAPRYU_REGSPILL_DIAGNOSTIC` is at its header default 0 in both pr1b
+  builds. Not yet run in a game itself.
+
 Checks run on the pr1b build: `meson-setup.log` shows `buildtype : release`
 and `b_ndebug : true`; all 579 commands in `compile_commands.json` carry
 `-DNDEBUG` and `-O3` (none `-O2`/`-g`, 561 also `-DMESA_DEBUG=0`) and all
