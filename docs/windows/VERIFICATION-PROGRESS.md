@@ -196,6 +196,25 @@ listed under "Whole-driver static analysis".
   cutscene, and a general regression pass since nullDescriptor changes
   how Eden binds empty slots in every game).
 
+- F13. `ir3_legalize.c` `instr_mark_helpers`: the list of cross-fiber
+  subgroup instructions that keep helper invocations alive (movmsk,
+  brcst.active, quad_shuffle.*, ball/bany) did not include the a7xx `shfl`
+  instruction or `movs`. In a fragment shader that samples textures
+  (`need_pixlod`), `(eq)` is placed after the last instruction in that
+  list, so a later `subgroupShuffleXor`/rotate/broadcast read from helper
+  fibers that were already terminated; `shfl` does not write its
+  destination when the source fiber is inactive, so those lanes kept stale
+  data. Eden emulates Maxwell `SHFL.BFLY` + `FSWZADD` derivatives with
+  constant-mask `subgroupShuffleXor`, which ir3 compiles to a bare uniform
+  `shfl.xor` with nothing tracked after the texture fetch. Only quads that
+  touch a primitive edge contain helper lanes, which matches the
+  per-triangle-edge grid seen on skin in Bayonetta 3 cutscenes (Adreno
+  X1-85). a6xx has no `shfl` (NIR lowers shuffles through movmsk/brcst,
+  which are tracked), so this is a7xx-only. Fixed in 78a84a6 by adding
+  `OPC_SHFL` and `OPC_MOVS` to the list; the Linux build compiles. Not yet
+  confirmed on hardware; the upstream main copy of the file could not be
+  fetched to check whether it already has the change.
+
 ### Reviewed, OK as-is
 
 - Timestamp readback in `wddm_timestamp_sample` is 64-bit: the
@@ -449,6 +468,24 @@ Hardware test plan (item 13): install `turnip-fable-pr1b-release\turnip_icd.json
 in Eden, compare with the Qualcomm 178 baseline / SnapRYU S3z8 DLL under
 the 1-hour stability rule; watch for the NEEDS-HW-TEST items (F1 submit
 batching, F4 + F11 triple buffering and acquire order, F8 compute dispatch).
+
+- 2026-10-30 05:35 UTC, user screenshot of the pr2 run
+  (`/mnt/project-files/snapryu/bayo3/turnip_pr2_face_mesh_0535.png`): the
+  whole face is tinted purple and the cheek and neck carry a fine,
+  geometry-aligned grid of thin lines, brightest at the silhouettes (ear,
+  nose). The user adds that the artifact has been present since the first
+  Windows Turnip builds, before any SnapRYU patch, which rules out the
+  patches and the regspill trial (the vanilla pr2v build was prepared but
+  not run). Capability diff against a Qualcomm-driver log of the same Eden
+  build (Xenoblade 3 session; no Bayonetta 3 Qualcomm log exists): subgroup
+  size 64 vs 128, subgroup stages 0x30 vs 0x3f, int64 and
+  workgroup-memory-explicit-layout on only with Turnip, EDS3 on only with
+  Turnip. Eden branches on driver id for Qualcomm only
+  (must_emulate_scaled_formats, has_broken_descriptor_aliasing,
+  color_write_enable removed, int64 and wgmem removed,
+  has_broken_fp32_denorm_flush). Static review of the derivative path led
+  to F13; next step is a pr3 build from 78a84a6 + 0001-0007 and one
+  Bayonetta 3 cutscene run.
 
 ### OPEN (possible follow-ups, not changed)
 
